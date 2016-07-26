@@ -60,18 +60,21 @@
 
 
 /* configuration constants */
-#define SERVER_IP_ADDR          "192.168.1.1"
-#define SERVER_IP_PORT_A        5001
-#define SERVER_IP_PORT_B        5002
-#define ACQUISITION_LENGTH      200000          /* samples */
-#define PRE_TRIGGER_LENGTH      40000           /* samples */
+#define SERVER_IP_ADDR          "10.66.101.133"
+//#define SERVER_IP_ADDR          "10.66.100.99"
+#define SERVER_IP_PORT_A        12345
+#define SERVER_IP_PORT_B        12346
+#define SERVER_IP_PORT_ACK      12347
+#define ACQUISITION_LENGTH      250000          /* samples */
+#define PRE_TRIGGER_LENGTH      2000           /* samples */
 #define DECIMATION              DE_8            /* one of enum decimation */
-#define TRIGGER_MODE            TR_CH_A_RISING  /* one of enum trigger */
-#define TRIGGER_THRESHOLD       2048            /* ADC counts, 2048 ≃ +0.25V */
+#define TRIGGER_MODE            TR_CH_B_FALLING  /* one of enum trigger */
+#define TRIGGER_THRESHOLD       750//2048            /* ADC counts, 2048 ≃ +0.25V */
+#define DELAYFORLOOP			5//66000
 
 /* internal constants */
 #define READ_BLOCK_SIZE         16384
-#define SEND_BLOCK_SIZE         17752
+#define SEND_BLOCK_SIZE         16384
 #define RAM_A_ADDRESS           0x1e000000UL
 #define RAM_A_SIZE              0x01000000UL
 #define RAM_B_ADDRESS           0x1f000000UL
@@ -169,6 +172,8 @@ static struct queue queue_b = {
 	.sock_fd = -1,
 };
 
+int AckSock_fd;
+
 
 /* functions */
 /*
@@ -214,9 +219,10 @@ int main(int argc, char **argv)
 	/* setup udp sockets */
 	queue_a.sock_fd = socket(PF_INET, SOCK_DGRAM, 0);
 	queue_b.sock_fd = socket(PF_INET, SOCK_DGRAM, 0);
-	if (queue_a.sock_fd < 0 || queue_b.sock_fd < 0) {
-		fprintf(stderr, "create socket failed, %s - sock_fd a %d sock_fd b %d\n",
-		        strerror(errno), queue_a.sock_fd, queue_b.sock_fd);
+	AckSock_fd = socket(PF_INET, SOCK_DGRAM, 0);
+	if (queue_a.sock_fd < 0 || queue_b.sock_fd < 0 || AckSock_fd < 0) {
+		fprintf(stderr, "create socket failed, %s - sock_fd a %d sock_fd b %d sock_fd ack %d\n",
+		        strerror(errno), queue_a.sock_fd, queue_b.sock_fd,AckSock_fd);
 		rc = -4;
 		goto main_exit;
 	}
@@ -239,10 +245,23 @@ int main(int argc, char **argv)
 		rc = -5;
 		goto main_exit;
 	}
+	
+	memset(&srv_addr, 0, sizeof(srv_addr));
+	srv_addr.sin_family = AF_INET;
+	srv_addr.sin_addr.s_addr = INADDR_ANY;
+	srv_addr.sin_port = htons(SERVER_IP_PORT_ACK);
+	memset(srv_addr.sin_zero, '\0', sizeof srv_addr.sin_zero); //optional
+	
+	/* setup ack socket */
+	if (bind(AckSock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) < 0) {
+		fprintf(stderr, "connect Ack failed, %s\n", strerror(errno));
+		rc = -5;
+		goto main_exit;
+	}
 
 	/* initialize scope */
 	scope_reset();
-	scope_setup_input_parameters(DECIMATION, EQ_LV, EQ_LV, 1, 1);
+	scope_setup_input_parameters(DECIMATION, EQ_HV, EQ_HV, 1, 1);
 	scope_setup_trigger_parameters(TRIGGER_THRESHOLD, TRIGGER_THRESHOLD, 50, 50, 1250);
 	scope_setup_axi_recording();
 
@@ -264,8 +283,11 @@ int main(int argc, char **argv)
 	queue_b.started = 1;
 
 	/* start reader in main-thread */
-	read_worker(&queue_a, &queue_b);
 
+	fprintf(stderr,"read_worker starting...\n");
+	read_worker(&queue_a, &queue_b);
+	
+	
 main_exit:
 	/* cleanup */
 	if (queue_a.started) {
@@ -292,6 +314,8 @@ main_exit:
 		close(queue_a.sock_fd);
 	if (queue_b.sock_fd >= 0)
 		close(queue_b.sock_fd);
+	if (AckSock_fd >=0)
+		close(AckSock_fd);
 
 	return rc;
 }
@@ -397,30 +421,60 @@ static void read_worker(struct queue *a, struct queue *b)
 	size_t length_a, length_b;
 	int a_first, a_ready, b_first, b_ready;
 	int did_something;
+	
+	char Ackbuf[3];
+	char ackstr[3];
+	
+	//fprintf(stderr,"Waiting for GO!\n");
+	//recv(AckSock_fd, Ackbuf, sizeof(Ackbuf), 0);
+	//strncpy(ackstr, Ackbuf, 3);
+	//fprintf(stderr,"Received: %*.*s\n",3,3,ackstr);
+	//if (strcmp("END",ackstr) == 0)
+		//goto read_worker_exit;
 
 	do {
+		
 		a_first = b_first = 1;
 		a_ready = b_ready = 0;
+		
+		do {
+		/* wait for send to finish */
+			/* get buffer positions */
+			if (pthread_mutex_lock(&a->mutex) != 0)
+				goto read_worker_exit;
+			read_pos_a = a->read_end;
+			if (pthread_mutex_unlock(&a->mutex) != 0)
+				goto read_worker_exit;
 
+			if (pthread_mutex_lock(&b->mutex) != 0)
+				goto read_worker_exit;
+			read_pos_b = b->read_end;
+			if (pthread_mutex_unlock(&b->mutex) != 0)
+				goto read_worker_exit;	
+			usleep(1000);
+		} while (read_pos_a != 0 || read_pos_b != 0);
+				
+								
 		scope_activate_trigger(TRIGGER_MODE);
-
 		/* wait for trigger */
 		while (*(uint32_t *)(scope + 0x00004))
 			usleep(5);
+		
+		fprintf(stderr,"triggered!\n");
 
 		start_pos_a = *(uint32_t *)(scope + 0x00060);   /* channel a trigger pointer */
 		start_pos_b = *(uint32_t *)(scope + 0x00080);   /* channel b trigger pointer */
 
 		start_pos_a = CIRCULAR_SUB(start_pos_a - RAM_A_ADDRESS, PRE_TRIGGER_LENGTH * 2, RAM_A_SIZE);
 		start_pos_b = CIRCULAR_SUB(start_pos_b - RAM_B_ADDRESS, PRE_TRIGGER_LENGTH * 2, RAM_B_SIZE);
-
+		
 		did_something = 1;
-
+		//fprintf(stderr,"did_something\n");
 		do {
 			if (!did_something)
 				usleep(5);
 			did_something = 0;
-
+			
 			/* get buffer positions */
 			if (pthread_mutex_lock(&a->mutex) != 0)
 				goto read_worker_exit;
@@ -438,10 +492,12 @@ static void read_worker(struct queue *a, struct queue *b)
 			if (a_first && read_pos_a == 0) {
 				a_first = 0;
 				a_ready = 1;
+				//fprintf(stderr,"a_ready\n");
 			}
 			if (b_first && read_pos_b == 0) {
 				b_first = 0;
 				b_ready = 1;
+				//fprintf(stderr,"b_ready\n");
 			}
 
 			/* get current recording positions */
@@ -459,7 +515,7 @@ static void read_worker(struct queue *a, struct queue *b)
 				length_b = READ_BLOCK_SIZE;
 			else
 				length_b = ACQUISITION_LENGTH * 2 - read_pos_b;
-
+			
 			/* copy if sender is ready and a full block is available in the dma ram */
 			if (a_ready && CIRCULAR_DIST(start_pos_a, curr_pos_a, RAM_A_SIZE) >= length_a) {
 				CIRCULARSRC_MEMCPY(a->buf + read_pos_a, buf_a, start_pos_a, RAM_A_SIZE, length_a);
@@ -498,9 +554,18 @@ static void read_worker(struct queue *a, struct queue *b)
 				did_something = 1;
 			}
 		} while (a_first || a_ready || b_first || b_ready);
+		/*wait for ack to cont*/
+		fprintf(stderr,"Waiting for Ack to Continue!\n");
+		recv(AckSock_fd, Ackbuf, sizeof(Ackbuf), 0);
+		strncpy(ackstr, Ackbuf, 3);
+		fprintf(stderr,"Received: %*.*s\n",3,3,ackstr);
+		if (strcmp("END",ackstr) == 0)
+			goto read_worker_exit;
+		usleep(DELAYFORLOOP);
 	} while (1);
 
 read_worker_exit:
+fprintf(stderr,"read_worker_exit\n");
 	return;
 }
 
@@ -540,7 +605,7 @@ static void *send_worker(void *data)
 					length -= sent;
 				}
 			} while (sent >= 0 && length > 0);
-
+			//sent = send(q->sock_fd, "\n", 1, 0);
 			if (sent < 0)
 				goto send_worker_exit;
 		} else {
