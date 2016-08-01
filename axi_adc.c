@@ -56,7 +56,10 @@
 #include <string.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
+#include <sys/time.h>
 #include <unistd.h>
+#include "MeComAPI/ComPort/ComPort.h"
+#include "MeComAPI/MeCom.h"
 
 
 /* configuration constants */
@@ -187,6 +190,9 @@ int main(int argc, char **argv)
 	void *smap = MAP_FAILED;
 	struct sockaddr_in srv_addr;
 
+	/*MeCom port open*/
+	ComPort_Open(0, 57600);
+	
 	/* acquire pointers to mapped bus regions of fpga and dma ram */
 	mem_fd = open("/dev/mem", O_RDWR);
 	if (mem_fd < 0) {
@@ -289,6 +295,7 @@ int main(int argc, char **argv)
 	
 	
 main_exit:
+	fprintf(stderr,"exiting...\n");
 	/* cleanup */
 	if (queue_a.started) {
 		pthread_cancel(queue_a.sender);
@@ -421,9 +428,17 @@ static void read_worker(struct queue *a, struct queue *b)
 	size_t length_a, length_b;
 	int a_first, a_ready, b_first, b_ready;
 	int did_something;
-	
-	char Ackbuf[3];
+
+	struct timeval tv;
+
+	char Ackbuf[100];
 	char ackstr[3];
+
+	float settemp;
+	float currentTemp;
+	struct sockaddr_in srv_addr;
+
+	MeParFloatFields Fields;
 	
 	//fprintf(stderr,"Waiting for GO!\n");
 	//recv(AckSock_fd, Ackbuf, sizeof(Ackbuf), 0);
@@ -459,8 +474,14 @@ static void read_worker(struct queue *a, struct queue *b)
 		/* wait for trigger */
 		while (*(uint32_t *)(scope + 0x00004))
 			usleep(5);
-		
-		fprintf(stderr,"triggered!\n");
+			
+		gettimeofday(&tv, NULL);
+
+		unsigned long long millisecondsSinceEpoch =
+    		(unsigned long long)(tv.tv_sec) * 1000 +
+    		(unsigned long long)(tv.tv_usec) / 1000;
+
+		fprintf(stderr,"triggered! %llu\n",millisecondsSinceEpoch);
 
 		start_pos_a = *(uint32_t *)(scope + 0x00060);   /* channel a trigger pointer */
 		start_pos_b = *(uint32_t *)(scope + 0x00080);   /* channel b trigger pointer */
@@ -554,11 +575,34 @@ static void read_worker(struct queue *a, struct queue *b)
 				did_something = 1;
 			}
 		} while (a_first || a_ready || b_first || b_ready);
+
+		if(MeCom_TEC_Mon_ObjectTemperature(0, 1, &Fields, MeGet))
+			printf("Current TEC Object Temperature: %f\n", Fields.Value);
+		
+		currentTemp=Fields.Value;
+		//sprintf(tempstr, "%f", Fields.Value);
+		memset(&srv_addr, 0, sizeof(srv_addr));
+		srv_addr.sin_family = AF_INET;
+		srv_addr.sin_addr.s_addr = inet_addr(SERVER_IP_ADDR);
+		srv_addr.sin_port = htons(SERVER_IP_PORT_ACK);
+
+		sendto(AckSock_fd,&millisecondsSinceEpoch,sizeof(unsigned long long),0,(struct sockaddr *)&srv_addr,sizeof(srv_addr));
+		sendto(AckSock_fd,&currentTemp,sizeof(float),0,(struct sockaddr *)&srv_addr,sizeof(srv_addr));
+
 		/*wait for ack to cont*/
 		fprintf(stderr,"Waiting for Ack to Continue!\n");
+
 		recv(AckSock_fd, Ackbuf, sizeof(Ackbuf), 0);
-		strncpy(ackstr, Ackbuf, 3);
-		fprintf(stderr,"Received: %*.*s\n",3,3,ackstr);
+		sscanf(Ackbuf,"%s %f",ackstr,&settemp);
+
+		fprintf(stderr,"Received: %s and Temp set %f\n",ackstr,settemp);
+
+        if(MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits)) {
+			Fields.Value = settemp;
+			if(MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeSet))
+				fprintf(stderr,"TEC Object Temperature: New Value: %f\n", Fields.Value);
+		}
+
 		if (strcmp("END",ackstr) == 0)
 			goto read_worker_exit;
 		usleep(DELAYFORLOOP);
