@@ -16,7 +16,7 @@ MECOMSRC = MeComAPI/MePort_Linux.c \
       MeComAPI/private/MeFrame.c MeComAPI/private/MeInt.c \
       MeComAPI/private/MeVarConv.c MeComAPI/ComPort/ComPort_Linux.c
 
-SRCS=axi_adc.c
+SRCS=temp_moniter.c axi_adc.c
 SRCS+=$(MECOMSRC)
 OBJ = $(SRCS:%.c=%.o)
 
@@ -40,3 +40,7 @@ UDPStreamer: $(OBJ)
 clean:
 	-$(RM) $(OBJ) UDPStreamer
 	
+update:
+	clear
+	rsync -arP --exclude '.vscode*' --exclude '.git*' chrisbetters@10.66.101.133:Dropbox/github/postdoc_code/red/RpRbDAQ ~/
+	$(MAKE) UDPStreamer
