@@ -52,6 +52,7 @@
 
 #include "temp_moniter.h"
 #include "configuration.h"
+#include "MeComAPI/MeCom.h"
 
 /* data types */
 enum equalizer { EQ_OFF, EQ_LV, EQ_HV };
@@ -126,6 +127,7 @@ static void read_worker(struct queue *a, struct queue *b);
 static void *send_worker(void *data);
 static void *tempmon_worker(void *data);
 unsigned long long getMillisecondsSinceEpoch(void);
+int flipFibreSwitchs(bool enableSpec);
 
 /* module global variables */
 static volatile void
@@ -167,6 +169,11 @@ int main(int argc, char **argv) {
   int mem_fd;
   void *smap = MAP_FAILED;
   struct sockaddr_in srv_addr;
+
+  // if (rp_Init() != RP_OK) {
+  //   fprintf(stderr, "Red Pitaya API init failed!\n");
+  //   return EXIT_FAILURE;
+  // }
 
   if (initMeCom()) {
     fprintf(stderr, "MeCom Failed.");
@@ -236,6 +243,26 @@ int main(int argc, char **argv) {
     goto main_exit;
   }
 
+  struct timeval timeout;
+  timeout.tv_sec = 1;
+  timeout.tv_usec = 0;
+
+  if (setsockopt(queue_a.sock_fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
+                 sizeof(timeout)) < 0)
+    fprintf(stderr, "setsockopt failed\n");
+
+  if (setsockopt(queue_a.sock_fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
+                 sizeof(timeout)) < 0)
+    fprintf(stderr, "setsockopt failed\n");
+
+  if (setsockopt(queue_b.sock_fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
+                 sizeof(timeout)) < 0)
+    fprintf(stderr, "setsockopt failed\n");
+
+  if (setsockopt(queue_b.sock_fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
+                 sizeof(timeout)) < 0)
+    fprintf(stderr, "setsockopt failed\n");
+
   /* setup ack socket */
   memset(&srv_addr, 0, sizeof(srv_addr));
   srv_addr.sin_family = AF_INET;
@@ -251,7 +278,7 @@ int main(int argc, char **argv) {
 
   /* initialize scope */
   scope_reset();
-  scope_setup_input_parameters(DECIMATION, EQ_HV, EQ_HV, 1, 1);
+  scope_setup_input_parameters(DECIMATION, EQ_HV, EQ_LV, 1, 1);
   scope_setup_trigger_parameters(TRIGGER_THRESHOLD, TRIGGER_THRESHOLD, 50, 50,
                                  1250);
   scope_setup_axi_recording();
@@ -273,14 +300,16 @@ int main(int argc, char **argv) {
   }
   queue_b.started = 1;
 
-  rc =
-      pthread_create(&queue_tecpid.sender, NULL, tempmon_worker, &queue_tecpid);
-  if (rc != 0) {
-    fprintf(stderr, "start sender B failed, %s\n", strerror(rc));
-    rc = -6;
-    goto main_exit;
-  }
-  queue_tecpid.started = 1;
+  /*  rc =
+        pthread_create(&queue_tecpid.sender, NULL, tempmon_worker,
+    &queue_tecpid);
+    if (rc != 0) {
+      fprintf(stderr, "start sender B failed, %s\n", strerror(rc));
+      rc = -6;
+      goto main_exit;
+    }
+    queue_tecpid.started = 1;
+    */
 
   /* start reader in main-thread */
 
@@ -436,14 +465,15 @@ static void read_worker(struct queue *a, struct queue *b) {
   float currentTemp;
   struct sockaddr_in srv_addr;
 
-  // MeParFloatFields Fields;
+  MeParFloatFields Fields;
 
-  // fprintf(stderr,"Waiting for GO!\n");
-  // recv(AckSock_fd, Ackbuf, sizeof(Ackbuf), 0);
-  // strncpy(ackstr, Ackbuf, 3);
-  // fprintf(stderr,"Received: %*.*s\n",3,3,ackstr);
-  // if (strcmp("END",ackstr) == 0)
-  // goto read_worker_exit;
+      /*wait for ack to start*/
+    fprintf(stderr, "Waiting for Ack to Continue!\n");
+    recv(AckSock_fd, Ackbuf, sizeof(Ackbuf), 0);
+    sscanf(Ackbuf, "%s %f", ackstr, &settemp);
+    fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
+    if (strcmp("END", ackstr) == 0)
+      goto read_worker_exit;
 
   do {
 
@@ -472,11 +502,13 @@ static void read_worker(struct queue *a, struct queue *b) {
     while (*(uint32_t *)(scope + 0x00004))
       usleep(5);
 
-    unsigned long long millisecondsSinceEpoch=getMillisecondsSinceEpoch();
-    fprintf(stderr,"Triggered at %lld",millisecondsSinceEpoch);
+    //rp_DpinSetState(RP_LED4, RP_HIGH);
 
-        start_pos_a =
-            *(uint32_t *)(scope + 0x00060); /* channel a trigger pointer */
+    unsigned long long millisecondsSinceEpoch = getMillisecondsSinceEpoch();
+    fprintf(stderr, "Triggered at %lld, ", millisecondsSinceEpoch);
+
+    start_pos_a =
+        *(uint32_t *)(scope + 0x00060); /* channel a trigger pointer */
     start_pos_b =
         *(uint32_t *)(scope + 0x00080); /* channel b trigger pointer */
 
@@ -578,45 +610,43 @@ static void read_worker(struct queue *a, struct queue *b) {
       }
     } while (a_first || a_ready || b_first || b_ready);
 
-    /*    if (MeCom_TEC_Mon_ObjectTemperature(MECOM_ADDRESS, MECOM_INST,
-       &Fields,
-                                            MeGet))
-          printf("Current TEC Object Temperature: %f\n", Fields.Value);
+    currentTemp = getTECTemp();
 
-        currentTemp = Fields.Value;
-        // sprintf(tempstr, "%f", Fields.Value);
-        memset(&srv_addr, 0, sizeof(srv_addr));
-        srv_addr.sin_family = AF_INET;
-        srv_addr.sin_addr.s_addr = inet_addr(SERVER_IP_ADDR);
-        srv_addr.sin_port = htons(SERVER_IP_PORT_ACK);
+    memset(&srv_addr, 0, sizeof(srv_addr));
+    srv_addr.sin_family = AF_INET;
+    srv_addr.sin_addr.s_addr = inet_addr(SERVER_IP_ADDR);
+    srv_addr.sin_port = htons(SERVER_IP_PORT_ACK);
 
-        sendto(AckSock_fd, &millisecondsSinceEpoch, sizeof(unsigned long long),
-       0,
-               (struct sockaddr *)&srv_addr, sizeof(srv_addr));
-        sendto(AckSock_fd, &currentTemp, sizeof(float), 0,
-               (struct sockaddr *)&srv_addr, sizeof(srv_addr));
-    */
+    sendto(AckSock_fd, &millisecondsSinceEpoch, sizeof(unsigned long long), 0,
+           (struct sockaddr *)&srv_addr, sizeof(srv_addr));
+    sendto(AckSock_fd, &currentTemp, sizeof(float), 0,
+           (struct sockaddr *)&srv_addr, sizeof(srv_addr));
+    //rp_DpinSetState(RP_LED4, RP_LOW);
 
     /*wait for ack to cont*/
     fprintf(stderr, "Waiting for Ack to Continue!\n");
+    // if (flipFibreSwitchs(true))
+    //  fprintf(stderr, "1 both switchs are high - ");
 
     recv(AckSock_fd, Ackbuf, sizeof(Ackbuf), 0);
     sscanf(Ackbuf, "%s %f", ackstr, &settemp);
 
     fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
-
-    /*    if (USE_BUILT_IN_PID) {
-          if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits)) {
-            Fields.Value = settemp;
-            if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeSet))
-              fprintf(stderr, "TEC Object Temperature: New Value: %f\n",
-                      Fields.Value);
-          }
-        } else {
-        }
-    */
+    // if (flipFibreSwitchs(false))
+    //  fprintf(stderr, "2 both switchs are high\n");
+    
     if (strcmp("END", ackstr) == 0)
       goto read_worker_exit;
+
+    if (USE_BUILT_IN_PID) {
+      if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits)) {
+        Fields.Value = settemp;
+        if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeSet))
+          fprintf(stderr, "TEC Object Temperature: New Value: %f\n",
+                  Fields.Value);
+      }
+    } else {
+    }
     usleep(DELAYFORLOOP);
   } while (1);
 
@@ -675,24 +705,26 @@ send_worker_exit:
 }
 
 static void *tempmon_worker(void *data) {
-  struct queue *q = (struct queue *)data;
+  // struct queue *q = (struct queue *)data;
   FILE *fp;
   fp = fopen("moniter.csv", "a");
   float temp, V, I;
   unsigned long long curTime;
-  float newsetpoint;
+  // float newsetpoint;
   do {
     temp = getTECTemp();
     getTECVandC(&V, &I);
-    curTime=getMillisecondsSinceEpoch();
+    curTime = getMillisecondsSinceEpoch();
 
-    newsetpoint=PID_Controller (8.0, temp)
-    
-    fprintf(stderr, "Time %lld Temp %f, V %f, I %f\n, New Set: %f\n",curTime, temp, V, I,newsetpoint);
-    fprintf(fp, "Time %lld Temp %f, V %f, I %f\n",curTime, temp, V, I);
-    usleep(500000);
+    // newsetpoint=PID_Controller (8.0, temp);
+
+    // fprintf(stderr, "Time %lld Temp %f, V %f, I %f\n, New Set: %f\n",curTime,
+    // temp, V, I,newsetpoint);
+    fprintf(fp, "Time %lld Temp %f, V %f, I %f\n", curTime, temp, V, I);
+    usleep(2000000);
   } while (1);
-send_worker_exit:
+  // send_worker_exit:
+  // return NULL;
   return NULL;
 }
 
@@ -706,16 +738,50 @@ unsigned long long getMillisecondsSinceEpoch(void) {
   return millisecondsSinceEpoch;
 }
 
-float actual_error, error_previous, P, I, D, Kp, Ki, Kd ;
+// int flipFibreSwitchs(bool enableSpec) {
+//   rp_pinState_t switch1state;
+//   rp_pinState_t switch2state;
+//   bool pathIsToRb;
 
-float PID_Controller (float set_point, float measured_value){
-error_previous = actual_error;  //error_previous holds the previous error
-actual_error = set_point - measured_value; 
-// PID 
-P  = actual_error;   //Current error
-I += error_previous;  //Sum of previous errors
-D  = actual_error - error_previous;  //Difference with previous error
+//   rp_DpinSetDirection(SW1STATUSPIN, RP_IN);
+//   rp_DpinSetDirection(SW2STATUSPIN, RP_IN);
+//   rp_DpinSetDirection(SW1TRIGPIN, RP_OUT);
+//   rp_DpinSetDirection(SW1TRIGPIN, RP_OUT);
 
-return Kp*P + Ki*I + Kd*D;   //adjust Kp, Ki, Kd empirically or by using online method such as ZN 
- 
+//   rp_DpinGetState(SW1STATUSPIN, &switch1state);
+//   rp_DpinGetState(SW2STATUSPIN, &switch2state);
+
+//   if (switch1state == RP_HIGH && switch2state == RP_HIGH)
+//     pathIsToRb = true;
+//   else
+//     pathIsToRb = false;
+
+//   if (enableSpec && pathIsToRb) {
+//     rp_DpinSetState(SW1TRIGPIN, RP_HIGH);
+//     rp_DpinSetState(SW2TRIGPIN, RP_HIGH);
+//     usleep(10000);
+//     rp_DpinSetState(SW1TRIGPIN, RP_LOW);
+//     rp_DpinSetState(SW2TRIGPIN, RP_LOW);
+//   }
+
+//   rp_DpinGetState(SW1STATUSPIN, &switch1state);
+//   rp_DpinGetState(SW2STATUSPIN, &switch2state);
+//   if (switch1state == RP_HIGH && switch2state == RP_HIGH)
+//     return 1;
+//   else
+//     return 0;
+// }
+
+float actual_error, error_previous, P, I, D;
+
+float PID_Controller(float set_point, float measured_value) {
+  error_previous = actual_error; // error_previous holds the previous error
+  actual_error = set_point - measured_value;
+  // PID
+  P = actual_error;                  // Current error
+  I += error_previous;               // Sum of previous errors
+  D = actual_error - error_previous; // Difference with previous error
+
+  return Kp * P + Ki * I + Kd * D; // adjust Kp, Ki, Kd empirically or by using
+                                   // online method such as ZN
 }
