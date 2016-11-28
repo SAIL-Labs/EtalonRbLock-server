@@ -11,17 +11,17 @@
 //#include "redpitaya/rp.h"
 
 /* configuration constants */
-#define SERVER_IP_ADDR "10.66.101.133"//"10.66.101.133"
-//#define SERVER_IP_ADDR          "10.66.100.99"
+//#define SERVER_IP_ADDR "10.66.101.133"//"10.66.101.133"
+//#define SERVER_IP_ADDR "10.66.100.101"
 #define SERVER_IP_PORT_A 12345
 #define SERVER_IP_PORT_B 12346
 #define SERVER_IP_PORT_ACK 12347
-#define ACQUISITION_LENGTH 200000    /* samples */
-#define PRE_TRIGGER_LENGTH 0      /* samples */
-#define DECIMATION DE_8              /* one of enum decimation */
+//#define ACQUISITION_LENGTH 150000    /* samples */
+#define PRE_TRIGGER_LENGTH 0        /* samples */
+#define DECIMATION DE_8             /* one of enum decimation */
 #define TRIGGER_MODE TR_EXT_FALLING /* one of enum trigger */
-#define TRIGGER_THRESHOLD 750 // 2048            /* ADC counts, 2048 ≃ +0.25V */
-#define DELAYFORLOOP 5        // 66000
+#define TRIGGER_THRESHOLD 750       // 2048            /* ADC counts, 2048 ≃ +0.25V */
+#define DELAYFORLOOP 5              // 66000
 
 /* internal constants */
 #define READ_BLOCK_SIZE 16384

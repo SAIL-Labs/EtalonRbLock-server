@@ -43,5 +43,5 @@ clean:
 update:
 	clear
 	-$(RM) UDPStreamer axi_adc.o
-	rsync -arP --exclude '.vscode*' --exclude '.git*' chrisbetters@10.66.101.133:Dropbox/github/postdoc_code/red/RpRbDAQ ~/
+	rsync -arP --exclude '.vscode*' --exclude '.git*' chrisbetters@chris-delphi.sail-laboratories.com:Dropbox/github/postdoc_code/red/RpRbDAQ ~/
 	$(MAKE) UDPStreamer

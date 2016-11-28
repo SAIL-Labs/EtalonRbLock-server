@@ -55,8 +55,14 @@
 #include "MeComAPI/MeCom.h"
 
 /* data types */
-enum equalizer { EQ_OFF, EQ_LV, EQ_HV };
-enum trigger {
+enum equalizer
+{
+  EQ_OFF,
+  EQ_LV,
+  EQ_HV
+};
+enum trigger
+{
   TR_OFF = 0,
   TR_MANUAL,
   TR_CH_A_RISING,
@@ -68,7 +74,8 @@ enum trigger {
   TR_ASG_RISING,
   TR_ASG_FALLING
 };
-enum decimation {
+enum decimation
+{
   DE_OFF = 0,
   DE_1 = 0x00001,
   DE_8 = 0x00008,
@@ -78,7 +85,8 @@ enum decimation {
   DE_65536 = 0x10000
 };
 
-struct queue {
+struct queue
+{
   pthread_mutex_t mutex;
   pthread_t sender;
   int started;
@@ -94,21 +102,25 @@ struct queue {
 /* add offsets within circular buffer */
 #define CIRCULAR_ADD(arg1, arg2, size) (((arg1) + (arg2)) % (size))
 /* subtract offsets within circular buffer */
-#define CIRCULAR_SUB(arg1, arg2, size)                                         \
+#define CIRCULAR_SUB(arg1, arg2, size) \
   ((arg1) >= (arg2) ? (arg1) - (arg2) : (size) + (arg1) - (arg2))
 /* calculate distance within circular buffer */
-#define CIRCULAR_DIST(argfrom, argto, size)                                    \
+#define CIRCULAR_DIST(argfrom, argto, size) \
   CIRCULAR_SUB((argto), (argfrom), (size))
 /* memcpy from circular source to linear target */
-#define CIRCULARSRC_MEMCPY(target, src_base, src_offs, src_size, length)       \
-  do {                                                                         \
-    if ((src_offs) + (length) <= (src_size)) {                                 \
-      memcpy((target), (void *)(src_base) + (src_offs), (length));             \
-    } else {                                                                   \
-      unsigned int __len1 = (src_size) - (src_offs);                           \
-      memcpy((target), (void *)(src_base) + (src_offs), __len1);               \
-      memcpy((void *)(target) + __len1, (src_base), (length)-__len1);          \
-    }                                                                          \
+#define CIRCULARSRC_MEMCPY(target, src_base, src_offs, src_size, length) \
+  do                                                                     \
+  {                                                                      \
+    if ((src_offs) + (length) <= (src_size))                             \
+    {                                                                    \
+      memcpy((target), (void *)(src_base) + (src_offs), (length));       \
+    }                                                                    \
+    else                                                                 \
+    {                                                                    \
+      unsigned int __len1 = (src_size) - (src_offs);                     \
+      memcpy((target), (void *)(src_base) + (src_offs), __len1);         \
+      memcpy((void *)(target) + __len1, (src_base), (length)-__len1);    \
+    }                                                                    \
   } while (0)
 
 static void scope_reset(void);
@@ -159,29 +171,59 @@ static struct queue queue_tecpid = {
 
 int AckSock_fd;
 
+char SERVER_IP_ADDR[] = "10.66.101.131";
+int ACQUISITION_LENGTH = 150000;
+
 /* functions */
 /*
  * main without paramater evaluation - all configuration is done through
  * constants for the purposes of this example.
  */
-int main(int argc, char **argv) {
+int main(int argc, char **argv)
+{
   int rc;
   int mem_fd;
   void *smap = MAP_FAILED;
   struct sockaddr_in srv_addr;
+  int c;
 
+  while ((c = getopt(argc, argv, "ai:")) != -1)
+    switch (c)
+    {
+    case 'a':
+      ACQUISITION_LENGTH = atoi(optarg);
+      break;
+    case 'i':
+      strcpy(SERVER_IP_ADDR, optarg);
+      break;
+    case '?':
+      if (optopt == 'c')
+        fprintf(stderr, "Option -%c requires an argument.\n", optopt);
+      else if (isprint(optopt))
+        fprintf(stderr, "Unknown option `-%c'.\n", optopt);
+      else
+        fprintf(stderr,
+                "Unknown option character `\\x%x'.\n",
+                optopt);
+      return 1;
+    default:
+      abort();
+    }
+  fprintf(stderr, "IP of Moniter %s\n", SERVER_IP_ADDR);
   // if (rp_Init() != RP_OK) {
   //   fprintf(stderr, "Red Pitaya API init failed!\n");
   //   return EXIT_FAILURE;
   // }
 
-  if (initMeCom()) {
+  if (initMeCom())
+  {
     fprintf(stderr, "MeCom Failed.");
     goto main_exit;
   }
   /* acquire pointers to mapped bus regions of fpga and dma ram */
   mem_fd = open("/dev/mem", O_RDWR);
-  if (mem_fd < 0) {
+  if (mem_fd < 0)
+  {
     fprintf(stderr, "open /dev/mem failed, %s\n", strerror(errno));
     rc = -1;
     goto main_exit;
@@ -191,7 +233,8 @@ int main(int argc, char **argv) {
               0x40100000UL);
   buf_a = mmap(NULL, RAM_A_SIZE, PROT_READ, MAP_SHARED, mem_fd, RAM_A_ADDRESS);
   buf_b = mmap(NULL, RAM_B_SIZE, PROT_READ, MAP_SHARED, mem_fd, RAM_B_ADDRESS);
-  if (smap == MAP_FAILED || buf_a == MAP_FAILED || buf_b == MAP_FAILED) {
+  if (smap == MAP_FAILED || buf_a == MAP_FAILED || buf_b == MAP_FAILED)
+  {
     fprintf(stderr, "mmap failed, %s - scope %p buf_a %p buf_b %p\n",
             strerror(errno), smap, buf_a, buf_b);
     rc = -2;
@@ -202,7 +245,8 @@ int main(int argc, char **argv) {
   /* allocate cacheable buffers */
   queue_a.buf = malloc(ACQUISITION_LENGTH * 2);
   queue_b.buf = malloc(ACQUISITION_LENGTH * 2);
-  if (queue_a.buf == NULL || queue_b.buf == NULL) {
+  if (queue_a.buf == NULL || queue_b.buf == NULL)
+  {
     fprintf(stderr, "malloc failed, %s - buf a %p buf b %p\n", strerror(errno),
             queue_a.buf, queue_b.buf);
     rc = -3;
@@ -213,7 +257,8 @@ int main(int argc, char **argv) {
   queue_a.sock_fd = socket(PF_INET, SOCK_DGRAM, 0);
   queue_b.sock_fd = socket(PF_INET, SOCK_DGRAM, 0);
   AckSock_fd = socket(PF_INET, SOCK_DGRAM, 0);
-  if (queue_a.sock_fd < 0 || queue_b.sock_fd < 0 || AckSock_fd < 0) {
+  if (queue_a.sock_fd < 0 || queue_b.sock_fd < 0 || AckSock_fd < 0)
+  {
     fprintf(
         stderr,
         "create socket failed, %s - sock_fd a %d sock_fd b %d sock_fd ack %d\n",
@@ -228,7 +273,8 @@ int main(int argc, char **argv) {
   srv_addr.sin_port = htons(SERVER_IP_PORT_A);
 
   if (connect(queue_a.sock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) <
-      0) {
+      0)
+  {
     fprintf(stderr, "connect A failed, %s\n", strerror(errno));
     rc = -5;
     goto main_exit;
@@ -237,7 +283,8 @@ int main(int argc, char **argv) {
   srv_addr.sin_port = htons(SERVER_IP_PORT_B);
 
   if (connect(queue_b.sock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) <
-      0) {
+      0)
+  {
     fprintf(stderr, "connect B failed, %s\n", strerror(errno));
     rc = -5;
     goto main_exit;
@@ -270,7 +317,8 @@ int main(int argc, char **argv) {
   srv_addr.sin_port = htons(SERVER_IP_PORT_ACK);
   memset(srv_addr.sin_zero, '\0', sizeof srv_addr.sin_zero); // optional
 
-  if (bind(AckSock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) < 0) {
+  if (bind(AckSock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) < 0)
+  {
     fprintf(stderr, "connect Ack failed, %s\n", strerror(errno));
     rc = -5;
     goto main_exit;
@@ -285,7 +333,8 @@ int main(int argc, char **argv) {
 
   /* start socket senders */
   rc = pthread_create(&queue_a.sender, NULL, send_worker, &queue_a);
-  if (rc != 0) {
+  if (rc != 0)
+  {
     fprintf(stderr, "start sender A failed, %s\n", strerror(rc));
     rc = -6;
     goto main_exit;
@@ -293,7 +342,8 @@ int main(int argc, char **argv) {
   queue_a.started = 1;
 
   rc = pthread_create(&queue_b.sender, NULL, send_worker, &queue_b);
-  if (rc != 0) {
+  if (rc != 0)
+  {
     fprintf(stderr, "start sender B failed, %s\n", strerror(rc));
     rc = -6;
     goto main_exit;
@@ -319,15 +369,18 @@ int main(int argc, char **argv) {
 main_exit:
   fprintf(stderr, "exiting...\n");
   /* cleanup */
-  if (queue_a.started) {
+  if (queue_a.started)
+  {
     pthread_cancel(queue_a.sender);
     pthread_join(queue_a.sender, NULL);
   }
-  if (queue_tecpid.started) {
+  if (queue_tecpid.started)
+  {
     pthread_cancel(queue_b.sender);
     pthread_join(queue_b.sender, NULL);
   }
-  if (queue_tecpid.started) {
+  if (queue_tecpid.started)
+  {
     pthread_cancel(queue_b.sender);
     pthread_join(queue_b.sender, NULL);
   }
@@ -353,14 +406,17 @@ main_exit:
   return rc;
 }
 
-static void scope_reset(void) {
+static void scope_reset(void)
+{
   *(uint32_t *)(scope + 0x00000) = 2; /* reset scope */
 }
 
 static void scope_set_filters(enum equalizer eq, int shaping,
-                              volatile uint32_t *base) {
+                              volatile uint32_t *base)
+{
   /* equalization filter */
-  switch (eq) {
+  switch (eq)
+  {
   case EQ_HV:
     *(base + 0) = 0x4c5f;  /* filter coeff aa */
     *(base + 1) = 0x2f38b; /* filter coeff bb */
@@ -376,10 +432,13 @@ static void scope_set_filters(enum equalizer eq, int shaping,
   }
 
   /* shaping filter */
-  if (shaping) {
+  if (shaping)
+  {
     *(base + 2) = 0xd9999a; /* filter coeff kk */
     *(base + 3) = 0x2666;   /* filter coeff pp */
-  } else {
+  }
+  else
+  {
     *(base + 2) = 0xffffff; /* filter coeff kk */
     *(base + 3) = 0x0;      /* filter coeff pp */
   }
@@ -388,7 +447,8 @@ static void scope_set_filters(enum equalizer eq, int shaping,
 static void scope_setup_input_parameters(enum decimation dec,
                                          enum equalizer ch_a_eq,
                                          enum equalizer ch_b_eq,
-                                         int ch_a_shaping, int ch_b_shaping) {
+                                         int ch_a_shaping, int ch_b_shaping)
+{
   *(uint32_t *)(scope + 0x00014) = dec; /* decimation */
   *(uint32_t *)(scope + 0x00028) =
       (dec != DE_OFF) ? 1 : 0; /* enable averaging */
@@ -403,7 +463,8 @@ static void scope_setup_input_parameters(enum decimation dec,
 
 static void scope_setup_trigger_parameters(int thresh_a, int thresh_b,
                                            int hyst_a, int hyst_b,
-                                           int deadtime) {
+                                           int deadtime)
+{
   *(uint32_t *)(scope + 0x00008) = thresh_a; /* channel a trigger threshold */
   *(uint32_t *)(scope + 0x0000c) = thresh_b; /* channel b trigger threshold */
   /* the legacy recording logic controls when the trigger mode will be reset. we
@@ -419,12 +480,13 @@ static void scope_setup_trigger_parameters(int thresh_a, int thresh_b,
   *(uint32_t *)(scope + 0x00090) = deadtime; /* trigger deadtime */
 }
 
-static void scope_setup_axi_recording(void) {
+static void scope_setup_axi_recording(void)
+{
   *(uint32_t *)(scope + 0x00050) = RAM_A_ADDRESS; /* buffer a start */
   *(uint32_t *)(scope + 0x00054) =
       RAM_A_ADDRESS + RAM_A_SIZE; /* buffer a stop */
   *(uint32_t *)(scope + 0x00058) = ACQUISITION_LENGTH - PRE_TRIGGER_LENGTH +
-                                   64; /* channel a post trigger samples */
+                                   64;            /* channel a post trigger samples */
   *(uint32_t *)(scope + 0x00070) = RAM_B_ADDRESS; /* buffer b start */
   *(uint32_t *)(scope + 0x00074) =
       RAM_B_ADDRESS + RAM_B_SIZE; /* buffer b stop */
@@ -435,7 +497,8 @@ static void scope_setup_axi_recording(void) {
   *(uint32_t *)(scope + 0x0007c) = 1; /* enable channel b axi */
 }
 
-static void scope_activate_trigger(enum trigger trigger) {
+static void scope_activate_trigger(enum trigger trigger)
+{
   /* TODO maybe use the 'keep armed' flag without reset, to have better
    * pre-trigger data when a trigger immediately follows the previous recording
    */
@@ -450,7 +513,8 @@ static void scope_activate_trigger(enum trigger trigger) {
  * queue->read_end for each block that was copied. rinse and repeat. access to
  * read_end is protected by queue->mutex.
  */
-static void read_worker(struct queue *a, struct queue *b) {
+static void read_worker(struct queue *a, struct queue *b)
+{
   unsigned int start_pos_a, start_pos_b;
   unsigned int curr_pos_a, curr_pos_b;
   unsigned int read_pos_a, read_pos_b;
@@ -467,20 +531,22 @@ static void read_worker(struct queue *a, struct queue *b) {
 
   MeParFloatFields Fields;
 
-      /*wait for ack to start*/
-    fprintf(stderr, "Waiting for Ack to Continue!\n");
-    recv(AckSock_fd, Ackbuf, sizeof(Ackbuf), 0);
-    sscanf(Ackbuf, "%s %f", ackstr, &settemp);
-    fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
-    if (strcmp("END", ackstr) == 0)
-      goto read_worker_exit;
+  /*wait for ack to start*/
+  fprintf(stderr, "Waiting for Ack to Continue!\n");
+  recv(AckSock_fd, Ackbuf, sizeof(Ackbuf), 0);
+  sscanf(Ackbuf, "%s %f", ackstr, &settemp);
+  fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
+  if (strcmp("END", ackstr) == 0)
+    goto read_worker_exit;
 
-  do {
+  do
+  {
 
     a_first = b_first = 1;
     a_ready = b_ready = 0;
 
-    do {
+    do
+    {
       /* wait for send to finish */
       /* get buffer positions */
       if (pthread_mutex_lock(&a->mutex) != 0)
@@ -519,7 +585,8 @@ static void read_worker(struct queue *a, struct queue *b) {
 
     did_something = 1;
     // fprintf(stderr,"did_something\n");
-    do {
+    do
+    {
       if (!did_something)
         usleep(5);
       did_something = 0;
@@ -538,12 +605,14 @@ static void read_worker(struct queue *a, struct queue *b) {
         goto read_worker_exit;
 
       /* before starting, test if senders are ready */
-      if (a_first && read_pos_a == 0) {
+      if (a_first && read_pos_a == 0)
+      {
         a_first = 0;
         a_ready = 1;
         // fprintf(stderr,"a_ready\n");
       }
-      if (b_first && read_pos_b == 0) {
+      if (b_first && read_pos_b == 0)
+      {
         b_first = 0;
         b_ready = 1;
         // fprintf(stderr,"b_ready\n");
@@ -569,7 +638,8 @@ static void read_worker(struct queue *a, struct queue *b) {
 
       /* copy if sender is ready and a full block is available in the dma ram */
       if (a_ready &&
-          CIRCULAR_DIST(start_pos_a, curr_pos_a, RAM_A_SIZE) >= length_a) {
+          CIRCULAR_DIST(start_pos_a, curr_pos_a, RAM_A_SIZE) >= length_a)
+      {
         CIRCULARSRC_MEMCPY(a->buf + read_pos_a, buf_a, start_pos_a, RAM_A_SIZE,
                            length_a);
         start_pos_a = CIRCULAR_ADD(start_pos_a, length_a, RAM_A_SIZE);
@@ -589,7 +659,8 @@ static void read_worker(struct queue *a, struct queue *b) {
         did_something = 1;
       }
       if (b_ready &&
-          CIRCULAR_DIST(start_pos_b, curr_pos_b, RAM_B_SIZE) > length_b) {
+          CIRCULAR_DIST(start_pos_b, curr_pos_b, RAM_B_SIZE) > length_b)
+      {
         CIRCULARSRC_MEMCPY(b->buf + read_pos_b, buf_b, start_pos_b, RAM_B_SIZE,
                            length_b);
         start_pos_b = CIRCULAR_ADD(start_pos_b, length_b, RAM_B_SIZE);
@@ -634,18 +705,22 @@ static void read_worker(struct queue *a, struct queue *b) {
     fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
     // if (flipFibreSwitchs(false))
     //  fprintf(stderr, "2 both switchs are high\n");
-    
+
     if (strcmp("END", ackstr) == 0)
       goto read_worker_exit;
 
-    if (USE_BUILT_IN_PID) {
-      if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits)) {
+    if (USE_BUILT_IN_PID)
+    {
+      if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits))
+      {
         Fields.Value = settemp;
         if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeSet))
           fprintf(stderr, "TEC Object Temperature: New Value: %f\n",
                   Fields.Value);
       }
-    } else {
+    }
+    else
+    {
     }
     usleep(DELAYFORLOOP);
   } while (1);
@@ -663,17 +738,20 @@ read_worker_exit:
  * read_end
  * is protected by queue->mutex.
  */
-static void *send_worker(void *data) {
+static void *send_worker(void *data)
+{
   struct queue *q = (struct queue *)data;
   unsigned int send_pos = 0;
   ssize_t sent;
   size_t length;
 
-  do {
+  do
+  {
     if (pthread_mutex_lock(&q->mutex) != 0)
       goto send_worker_exit;
     if (q->read_end >= ACQUISITION_LENGTH * 2 &&
-        send_pos >= ACQUISITION_LENGTH * 2) {
+        send_pos >= ACQUISITION_LENGTH * 2)
+    {
       send_pos = 0;
       q->read_end = 0;
     }
@@ -681,13 +759,16 @@ static void *send_worker(void *data) {
     if (pthread_mutex_unlock(&q->mutex) != 0)
       goto send_worker_exit;
 
-    if (length > 0) {
-      do {
+    if (length > 0)
+    {
+      do
+      {
         if (length > SEND_BLOCK_SIZE)
           sent = send(q->sock_fd, q->buf + send_pos, SEND_BLOCK_SIZE, 0);
         else
           sent = send(q->sock_fd, q->buf + send_pos, length, 0);
-        if (sent > 0) {
+        if (sent > 0)
+        {
           send_pos += sent;
           length -= sent;
         }
@@ -695,7 +776,9 @@ static void *send_worker(void *data) {
       // sent = send(q->sock_fd, "\n", 1, 0);
       if (sent < 0)
         goto send_worker_exit;
-    } else {
+    }
+    else
+    {
       usleep(5);
     }
   } while (1);
@@ -704,14 +787,16 @@ send_worker_exit:
   return NULL;
 }
 
-static void *tempmon_worker(void *data) {
+static void *tempmon_worker(void *data)
+{
   // struct queue *q = (struct queue *)data;
   FILE *fp;
   fp = fopen("moniter.csv", "a");
   float temp, V, I;
   unsigned long long curTime;
   // float newsetpoint;
-  do {
+  do
+  {
     temp = getTECTemp();
     getTECVandC(&V, &I);
     curTime = getMillisecondsSinceEpoch();
@@ -728,7 +813,8 @@ static void *tempmon_worker(void *data) {
   return NULL;
 }
 
-unsigned long long getMillisecondsSinceEpoch(void) {
+unsigned long long getMillisecondsSinceEpoch(void)
+{
   struct timeval tv;
   gettimeofday(&tv, NULL);
 
@@ -774,7 +860,8 @@ unsigned long long getMillisecondsSinceEpoch(void) {
 
 float actual_error, error_previous, P, I, D;
 
-float PID_Controller(float set_point, float measured_value) {
+float PID_Controller(float set_point, float measured_value)
+{
   error_previous = actual_error; // error_previous holds the previous error
   actual_error = set_point - measured_value;
   // PID
