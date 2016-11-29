@@ -27,23 +27,6 @@
  * SOFTWARE.
  */
 
-/*
- * This is a demonstration of how to use the direct-to-ram streaming feature
- * of the Red Pitaya. There is no support for that mechanism yet in the RP-API,
- * so direct FPGA access is used for programming the scope.
- *
- * The program configures the scope for triggered recording into external RAM
- * and sends a pre-determined number of samples from both channels to two UDP
- * sockets each time a trigger occurs.
- * It uses one sender-thread for each socket, which sends data from an
- * intermediate buffer. The intermediate buffers are filled from the DMA buffers
- * as soon as a certain amount of samples is available on the respective
- * channel.
- *
- * All configuration options are hard-coded with '#define's, please adapt as
- * needed.
- */
-
 #include <sys/time.h>
 #include <sys/mman.h>
 #include <sys/socket.h>
@@ -52,7 +35,7 @@
 
 #include "temp_moniter.h"
 #include "configuration.h"
-#include "MeComAPI/MeCom.h"
+//#include "MeComAPI/MeCom.h"
 
 /* data types */
 enum equalizer
@@ -215,11 +198,11 @@ int main(int argc, char **argv)
   //   return EXIT_FAILURE;
   // }
 
-  if (initMeCom())
-  {
-    fprintf(stderr, "MeCom Failed.");
-    goto main_exit;
-  }
+  // if (initMeCom())
+  // {
+  //   fprintf(stderr, "MeCom Failed.");
+  //   goto main_exit;
+  // }
   /* acquire pointers to mapped bus regions of fpga and dma ram */
   mem_fd = open("/dev/mem", O_RDWR);
   if (mem_fd < 0)
@@ -253,10 +236,10 @@ int main(int argc, char **argv)
     goto main_exit;
   }
 
-  /* setup udp sockets */
-  queue_a.sock_fd = socket(PF_INET, SOCK_DGRAM, 0);
-  queue_b.sock_fd = socket(PF_INET, SOCK_DGRAM, 0);
-  AckSock_fd = socket(PF_INET, SOCK_DGRAM, 0);
+  /* setup tcp sockets */
+  queue_a.sock_fd = socket(PF_INET, SOCK_STREAM, 0);
+  queue_b.sock_fd = socket(PF_INET, SOCK_STREAM, 0);
+  AckSock_fd = socket(PF_INET, SOCK_STREAM, 0);
   if (queue_a.sock_fd < 0 || queue_b.sock_fd < 0 || AckSock_fd < 0)
   {
     fprintf(
@@ -267,48 +250,56 @@ int main(int argc, char **argv)
     goto main_exit;
   }
 
+  int reuse = 1;
+  if (setsockopt(queue_a.sock_fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse, sizeof(reuse)) < 0)
+    fprintf(stderr, "setsockopt(SO_REUSEADDR) failed");
+  if (setsockopt(queue_b.sock_fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse, sizeof(reuse)) < 0)
+    fprintf(stderr, "setsockopt(SO_REUSEADDR) failed");
+  if (setsockopt(AckSock_fd, SOL_SOCKET, SO_REUSEADDR, (const char *)&reuse, sizeof(reuse)) < 0)
+    fprintf(stderr, "setsockopt(SO_REUSEADDR) failed");
+
   memset(&srv_addr, 0, sizeof(srv_addr));
   srv_addr.sin_family = AF_INET;
-  srv_addr.sin_addr.s_addr = inet_addr(SERVER_IP_ADDR);
+  srv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
   srv_addr.sin_port = htons(SERVER_IP_PORT_A);
 
-  if (connect(queue_a.sock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) <
+  if (bind(queue_a.sock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) <
       0)
   {
-    fprintf(stderr, "connect A failed, %s\n", strerror(errno));
+    fprintf(stderr, "bind A failed, %s\n", strerror(errno));
     rc = -5;
     goto main_exit;
   }
 
   srv_addr.sin_port = htons(SERVER_IP_PORT_B);
 
-  if (connect(queue_b.sock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) <
+  if (bind(queue_b.sock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) <
       0)
   {
-    fprintf(stderr, "connect B failed, %s\n", strerror(errno));
+    fprintf(stderr, "bind B failed, %s\n", strerror(errno));
     rc = -5;
     goto main_exit;
   }
 
-  struct timeval timeout;
-  timeout.tv_sec = 1;
-  timeout.tv_usec = 0;
+  // struct timeval timeout;
+  // timeout.tv_sec = 1;
+  // timeout.tv_usec = 0;
 
-  if (setsockopt(queue_a.sock_fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
-                 sizeof(timeout)) < 0)
-    fprintf(stderr, "setsockopt failed\n");
+  // if (setsockopt(queue_a.sock_fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
+  //                sizeof(timeout)) < 0)
+  //   fprintf(stderr, "setsockopt failed\n");
 
-  if (setsockopt(queue_a.sock_fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
-                 sizeof(timeout)) < 0)
-    fprintf(stderr, "setsockopt failed\n");
+  // if (setsockopt(queue_a.sock_fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
+  //                sizeof(timeout)) < 0)
+  //   fprintf(stderr, "setsockopt failed\n");
 
-  if (setsockopt(queue_b.sock_fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
-                 sizeof(timeout)) < 0)
-    fprintf(stderr, "setsockopt failed\n");
+  // if (setsockopt(queue_b.sock_fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
+  //                sizeof(timeout)) < 0)
+  //   fprintf(stderr, "setsockopt failed\n");
 
-  if (setsockopt(queue_b.sock_fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
-                 sizeof(timeout)) < 0)
-    fprintf(stderr, "setsockopt failed\n");
+  // if (setsockopt(queue_b.sock_fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
+  //                sizeof(timeout)) < 0)
+  //   fprintf(stderr, "setsockopt failed\n");
 
   /* setup ack socket */
   memset(&srv_addr, 0, sizeof(srv_addr));
@@ -319,7 +310,7 @@ int main(int argc, char **argv)
 
   if (bind(AckSock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) < 0)
   {
-    fprintf(stderr, "connect Ack failed, %s\n", strerror(errno));
+    fprintf(stderr, "bind Ack failed, %s\n", strerror(errno));
     rc = -5;
     goto main_exit;
   }
@@ -528,12 +519,17 @@ static void read_worker(struct queue *a, struct queue *b)
   float settemp;
   float currentTemp;
   struct sockaddr_in srv_addr;
+  int psd;
 
-  MeParFloatFields Fields;
+  //MeParFloatFields Fields;
 
   /*wait for ack to start*/
-  fprintf(stderr, "Waiting for Ack to Continue!\n");
-  recv(AckSock_fd, Ackbuf, sizeof(Ackbuf), 0);
+  fprintf(stderr, "Waiting for Ack to Continue! (1st)\n");
+  listen(AckSock_fd, 10);
+  psd = accept(AckSock_fd, 0, 0);
+  recv(psd, Ackbuf, sizeof(Ackbuf), 0);
+  close(psd);
+
   sscanf(Ackbuf, "%s %f", ackstr, &settemp);
   fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
   if (strcmp("END", ackstr) == 0)
@@ -560,7 +556,7 @@ static void read_worker(struct queue *a, struct queue *b)
       read_pos_b = b->read_end;
       if (pthread_mutex_unlock(&b->mutex) != 0)
         goto read_worker_exit;
-      usleep(1000);
+      usleep(5);
     } while (read_pos_a != 0 || read_pos_b != 0);
 
     scope_activate_trigger(TRIGGER_MODE);
@@ -571,7 +567,7 @@ static void read_worker(struct queue *a, struct queue *b)
     //rp_DpinSetState(RP_LED4, RP_HIGH);
 
     unsigned long long millisecondsSinceEpoch = getMillisecondsSinceEpoch();
-    fprintf(stderr, "Triggered at %lld, ", millisecondsSinceEpoch);
+    fprintf(stderr, "Triggered at %lld.\n", millisecondsSinceEpoch);
 
     start_pos_a =
         *(uint32_t *)(scope + 0x00060); /* channel a trigger pointer */
@@ -681,25 +677,23 @@ static void read_worker(struct queue *a, struct queue *b)
       }
     } while (a_first || a_ready || b_first || b_ready);
 
-    currentTemp = getTECTemp();
+    //currentTemp = getTECTemp();
 
-    memset(&srv_addr, 0, sizeof(srv_addr));
-    srv_addr.sin_family = AF_INET;
-    srv_addr.sin_addr.s_addr = inet_addr(SERVER_IP_ADDR);
-    srv_addr.sin_port = htons(SERVER_IP_PORT_ACK);
-
-    sendto(AckSock_fd, &millisecondsSinceEpoch, sizeof(unsigned long long), 0,
-           (struct sockaddr *)&srv_addr, sizeof(srv_addr));
-    sendto(AckSock_fd, &currentTemp, sizeof(float), 0,
-           (struct sockaddr *)&srv_addr, sizeof(srv_addr));
+    listen(AckSock_fd, 10);
+    psd = accept(AckSock_fd, 0, 0);
+    fprintf(stderr, "Waiting to send temp and timestamp!\n");
+    send(psd, &millisecondsSinceEpoch, sizeof(unsigned long long), 0);
+    send(psd, &currentTemp, sizeof(float), 0);
+    close(psd);
     //rp_DpinSetState(RP_LED4, RP_LOW);
 
     /*wait for ack to cont*/
-    fprintf(stderr, "Waiting for Ack to Continue!\n");
-    // if (flipFibreSwitchs(true))
-    //  fprintf(stderr, "1 both switchs are high - ");
 
-    recv(AckSock_fd, Ackbuf, sizeof(Ackbuf), 0);
+    listen(AckSock_fd, 10);
+    psd = accept(AckSock_fd, 0, 0);
+    fprintf(stderr, "Waiting for Ack to Continue!\n");
+    recv(psd, Ackbuf, sizeof(Ackbuf), 0);
+    close(psd);
     sscanf(Ackbuf, "%s %f", ackstr, &settemp);
 
     fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
@@ -709,19 +703,19 @@ static void read_worker(struct queue *a, struct queue *b)
     if (strcmp("END", ackstr) == 0)
       goto read_worker_exit;
 
-    if (USE_BUILT_IN_PID)
-    {
-      if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits))
-      {
-        Fields.Value = settemp;
-        if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeSet))
-          fprintf(stderr, "TEC Object Temperature: New Value: %f\n",
-                  Fields.Value);
-      }
-    }
-    else
-    {
-    }
+    // if (USE_BUILT_IN_PID)
+    // {
+    //   if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits))
+    //   {
+    //     Fields.Value = settemp;
+    //     if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeSet))
+    //       fprintf(stderr, "TEC Object Temperature: New Value: %f\n",
+    //               Fields.Value);
+    //   }
+    // }
+    // else
+    // {
+    // }
     usleep(DELAYFORLOOP);
   } while (1);
 
@@ -741,6 +735,7 @@ read_worker_exit:
 static void *send_worker(void *data)
 {
   struct queue *q = (struct queue *)data;
+  int psd = 0;
   unsigned int send_pos = 0;
   ssize_t sent;
   size_t length;
@@ -754,6 +749,8 @@ static void *send_worker(void *data)
     {
       send_pos = 0;
       q->read_end = 0;
+      close(psd);
+      psd = 0;
     }
     length = q->read_end - send_pos;
     if (pthread_mutex_unlock(&q->mutex) != 0)
@@ -761,18 +758,27 @@ static void *send_worker(void *data)
 
     if (length > 0)
     {
+      if (!psd)
+      {
+        //fprintf(stderr, "listening\n");
+        listen(q->sock_fd, 10);
+        psd = accept(q->sock_fd, NULL, NULL);
+        //fprintf(stderr, "accepted\n");
+      }
+
       do
       {
         if (length > SEND_BLOCK_SIZE)
-          sent = send(q->sock_fd, q->buf + send_pos, SEND_BLOCK_SIZE, 0);
+          sent = send(psd, q->buf + send_pos, SEND_BLOCK_SIZE, 0);
         else
-          sent = send(q->sock_fd, q->buf + send_pos, length, 0);
+          sent = send(psd, q->buf + send_pos, length, 0);
         if (sent > 0)
         {
           send_pos += sent;
           length -= sent;
         }
       } while (sent >= 0 && length > 0);
+
       // sent = send(q->sock_fd, "\n", 1, 0);
       if (sent < 0)
         goto send_worker_exit;
@@ -787,31 +793,31 @@ send_worker_exit:
   return NULL;
 }
 
-static void *tempmon_worker(void *data)
-{
-  // struct queue *q = (struct queue *)data;
-  FILE *fp;
-  fp = fopen("moniter.csv", "a");
-  float temp, V, I;
-  unsigned long long curTime;
-  // float newsetpoint;
-  do
-  {
-    temp = getTECTemp();
-    getTECVandC(&V, &I);
-    curTime = getMillisecondsSinceEpoch();
+// static void *tempmon_worker(void *data)
+// {
+//   // struct queue *q = (struct queue *)data;
+//   FILE *fp;
+//   fp = fopen("moniter.csv", "a");
+//   float temp, V, I;
+//   unsigned long long curTime;
+//   // float newsetpoint;
+//   do
+//   {
+//     temp = getTECTemp();
+//     getTECVandC(&V, &I);
+//     curTime = getMillisecondsSinceEpoch();
 
-    // newsetpoint=PID_Controller (8.0, temp);
+//     // newsetpoint=PID_Controller (8.0, temp);
 
-    // fprintf(stderr, "Time %lld Temp %f, V %f, I %f\n, New Set: %f\n",curTime,
-    // temp, V, I,newsetpoint);
-    fprintf(fp, "Time %lld Temp %f, V %f, I %f\n", curTime, temp, V, I);
-    usleep(2000000);
-  } while (1);
-  // send_worker_exit:
-  // return NULL;
-  return NULL;
-}
+//     // fprintf(stderr, "Time %lld Temp %f, V %f, I %f\n, New Set: %f\n",curTime,
+//     // temp, V, I,newsetpoint);
+//     fprintf(fp, "Time %lld Temp %f, V %f, I %f\n", curTime, temp, V, I);
+//     usleep(2000000);
+//   } while (1);
+//   // send_worker_exit:
+//   // return NULL;
+//   return NULL;
+// }
 
 unsigned long long getMillisecondsSinceEpoch(void)
 {
