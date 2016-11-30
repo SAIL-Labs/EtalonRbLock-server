@@ -21,7 +21,7 @@
 #define DECIMATION DE_8             /* one of enum decimation */
 #define TRIGGER_MODE TR_EXT_FALLING /* one of enum trigger */
 #define TRIGGER_THRESHOLD 750       // 2048            /* ADC counts, 2048 ≃ +0.25V */
-#define DELAYFORLOOP 33000          // 66000
+#define DELAYFORLOOP 5              // 66000
 
 /* internal constants */
 #define READ_BLOCK_SIZE 16384
@@ -31,6 +31,7 @@
 #define RAM_B_ADDRESS 0x1f000000UL
 #define RAM_B_SIZE 0x01000000UL
 
+#define ENABLE_MECOM 1
 /* MeCom API parameters */
 #define MECOM_ADDRESS 0
 #define MECOM_INST 1
