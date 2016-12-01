@@ -119,6 +119,7 @@ static void scope_setup_trigger_parameters(int thresh_a, int thresh_b,
 static void scope_setup_axi_recording(void);
 static void scope_activate_trigger(enum trigger trigger);
 static void read_worker(struct queue *a, struct queue *b);
+static int waitForAck(int AckSock_fd, float *settemp);
 static void *send_worker(void *data);
 static void *tempmon_worker(void *data);
 unsigned long long getMillisecondsSinceEpoch(void);
@@ -320,7 +321,7 @@ int main(int argc, char **argv)
 
   /* initialize scope */
   scope_reset();
-  scope_setup_input_parameters(DECIMATION, EQ_HV, EQ_LV, 1, 1);
+  scope_setup_input_parameters(DECIMATION, EQ_HV, EQ_HV, 1, 1);
   scope_setup_trigger_parameters(TRIGGER_THRESHOLD, TRIGGER_THRESHOLD, 50, 50,
                                  1250);
   scope_setup_axi_recording();
@@ -516,9 +517,6 @@ static void read_worker(struct queue *a, struct queue *b)
   int a_first, a_ready, b_first, b_ready;
   int did_something;
 
-  char Ackbuf[100];
-  char ackstr[3];
-
   float settemp;
   float currentTemp;
   struct sockaddr_in srv_addr;
@@ -527,16 +525,17 @@ static void read_worker(struct queue *a, struct queue *b)
   MeParFloatFields Fields;
 
   /*wait for ack to start*/
-  fprintf(stderr, "Waiting for Ack to Continue! (1st)\n");
-  listen(AckSock_fd, 10);
-  psd = accept(AckSock_fd, 0, 0);
-  recv(psd, Ackbuf, sizeof(Ackbuf), 0);
-  close(psd);
-
-  sscanf(Ackbuf, "%s %f", ackstr, &settemp);
-  fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
-  if (strcmp("END", ackstr) == 0)
+  fprintf(stderr, "read_worker ready...\n");
+  if (waitForAck(AckSock_fd, &settemp))
     goto read_worker_exit;
+  // listen(AckSock_fd, 10);
+  // psd = accept(AckSock_fd, 0, 0);
+  // recv(psd, Ackbuf, sizeof(Ackbuf), 0);
+  // close(psd);
+  // sscanf(Ackbuf, "%s %f", ackstr, &settemp);
+  // fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
+  // if (strcmp("END", ackstr) == 0)
+  //   goto read_worker_exit;
 
   do
   {
@@ -685,29 +684,27 @@ static void read_worker(struct queue *a, struct queue *b)
     else
       currentTemp = 0;
 
+    /*wait for ack to cont*/
     listen(AckSock_fd, 10);
     psd = accept(AckSock_fd, 0, 0);
     fprintf(stderr, "Waiting to send temp and timestamp!\n");
     send(psd, &millisecondsSinceEpoch, sizeof(unsigned long long), 0);
     send(psd, &currentTemp, sizeof(float), 0);
     close(psd);
-    //rp_DpinSetState(RP_LED4, RP_LOW);
 
     /*wait for ack to cont*/
-
-    listen(AckSock_fd, 10);
-    psd = accept(AckSock_fd, 0, 0);
-    fprintf(stderr, "Waiting for Ack to Continue!\n");
-    recv(psd, Ackbuf, sizeof(Ackbuf), 0);
-    close(psd);
-    sscanf(Ackbuf, "%s %f", ackstr, &settemp);
-
-    fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
-    // if (flipFibreSwitchs(false))
-    //  fprintf(stderr, "2 both switchs are high\n");
-
-    if (strcmp("END", ackstr) == 0)
+    if (waitForAck(AckSock_fd, &settemp))
       goto read_worker_exit;
+
+    // listen(AckSock_fd, 10);
+    // psd = accept(AckSock_fd, 0, 0);
+    // fprintf(stderr, "Waiting for Ack to Continue!\n");
+    // recv(psd, Ackbuf, sizeof(Ackbuf), 0);
+    // close(psd);
+    // sscanf(Ackbuf, "%s %f", ackstr, &settemp);
+    // fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
+    // if (strcmp("END", ackstr) == 0)
+    //   goto read_worker_exit;
 
     if (USE_BUILT_IN_PID && ENABLE_MECOM)
     {
@@ -728,6 +725,27 @@ static void read_worker(struct queue *a, struct queue *b)
 read_worker_exit:
   fprintf(stderr, "read_worker_exit\n");
   return;
+}
+
+static int waitForAck(int AckSock_fd, float *settemp)
+{
+  char Ackbuf[100];
+  char ackstr[3];
+  int psd;
+
+  /*wait for ack to cont*/
+  fprintf(stderr, "Waiting for Ack to Continue!\n");
+  listen(AckSock_fd, 10);
+  psd = accept(AckSock_fd, 0, 0);
+  recv(psd, Ackbuf, sizeof(Ackbuf), 0);
+  close(psd);
+  sscanf(Ackbuf, "%s %f", ackstr, settemp);
+  fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, *settemp);
+
+  if (strcmp("END", ackstr) == 0)
+    return 0;
+  else
+    return 1;
 }
 
 /*
