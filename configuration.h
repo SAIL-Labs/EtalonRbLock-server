@@ -18,14 +18,14 @@
 #define SERVER_IP_PORT_ACK 12347
 //#define ACQUISITION_LENGTH 150000    /* samples */
 #define PRE_TRIGGER_LENGTH 0        /* samples */
-#define DECIMATION DE_8             /* one of enum decimation */
+#define DECIMATION DE_64            /* one of enum decimation */
 #define TRIGGER_MODE TR_EXT_FALLING /* one of enum trigger */
-#define TRIGGER_THRESHOLD 750       // 2048            /* ADC counts, 2048 ≃ +0.25V */
+#define TRIGGER_THRESHOLD 350       // 2048   750         /* ADC counts, 2048 ≃ +0.25V */
 #define DELAYFORLOOP 5              // 66000
 
 /* internal constants */
-#define READ_BLOCK_SIZE 16384
-#define SEND_BLOCK_SIZE 16384
+#define READ_BLOCK_SIZE 20000
+#define SEND_BLOCK_SIZE 20000
 #define RAM_A_ADDRESS 0x1e000000UL
 #define RAM_A_SIZE 0x01000000UL
 #define RAM_B_ADDRESS 0x1f000000UL
