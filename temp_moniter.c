@@ -6,34 +6,46 @@
 #include "MeComAPI/MeCom.h"
 #include "configuration.h"
 
-int initMeCom(void)
+int initMeCom(int MECOM_ADDRESS, int MECOM_INST, int USE_BUILT_IN_PID)
 {
   MeParLongFields lFields;
 
   /*MeCom port open*/
   ComPort_Open(0, 57600);
 
-  if (USE_BUILT_IN_PID)
+  // if (MeCom_ResetDevice(MECOM_ADDRESS))
+  // {
+  //   sleep(1);
+  //   fprintf(stderr, "Device Reset OK.\n");
+  // }
+
+  if (MeCom_TEC_Ope_OutputStageInputSelection(MECOM_ADDRESS, MECOM_INST, &lFields, MeGetLimits))
   {
-    lFields.Value = 2; // Temperature Controller
-    MeCom_TEC_Ope_OutputStageInputSelection(MECOM_ADDRESS, MECOM_INST, &lFields,
-                                            MeSet);
+    if (USE_BUILT_IN_PID)
+    {
+      fprintf(stderr, "Using Built-in Temperature Controller\n\n");
+      lFields.Value = 2; // Temperature Controller
+      MeCom_TEC_Ope_OutputStageInputSelection(MECOM_ADDRESS, MECOM_INST, &lFields,
+                                              MeSet);
+    }
+    else
+    {
+      fprintf(stderr, "Using Live Current/Voltage\n\n");
+      lFields.Value = 1; // Live Current/Voltage
+      MeCom_TEC_Ope_OutputStageInputSelection(MECOM_ADDRESS, MECOM_INST, &lFields,
+                                              MeSet);
+      //setTECVandC(MECOM_ADDRESS, MECOM_INST, 2, 0);
+    }
+    return 0;
   }
-  else
-  {
-    lFields.Value = 1; // Live Current/Voltage
-    MeCom_TEC_Ope_OutputStageInputSelection(MECOM_ADDRESS, MECOM_INST, &lFields,
-                                            MeSet);
-    setTECVandC(0, 0);
-  }
-  return 0;
+  return 1;
 }
 
-int setTECVandC(float Voltage, float Current)
+int setTECVandC(int MECOM_ADDRESS, int MECOM_INST, float Voltage, float Current)
 {
   MeParFloatFields fFields;
   int err;
-  fFields.Value = 0;
+  fFields.Value = Current;
   err =
       MeCom_TEC_Oth_LiveSetCurrent(MECOM_ADDRESS, MECOM_INST, &fFields, MeSet);
   if (err == 0)
@@ -42,7 +54,7 @@ int setTECVandC(float Voltage, float Current)
     return err;
   }
 
-  fFields.Value = 0;
+  fFields.Value = Voltage;
   err =
       MeCom_TEC_Oth_LiveSetVoltage(MECOM_ADDRESS, MECOM_INST, &fFields, MeSet);
   if (err == 0)
@@ -53,7 +65,7 @@ int setTECVandC(float Voltage, float Current)
   return 0;
 }
 
-int getTECVandC(float *Voltage, float *Current)
+int getTECVandC(int MECOM_ADDRESS, int MECOM_INST, float *Voltage, float *Current)
 {
   MeParFloatFields fFields;
   int err;
@@ -78,7 +90,7 @@ int getTECVandC(float *Voltage, float *Current)
   return 0;
 }
 
-float getTECTemp(void)
+float getTECTemp(int MECOM_ADDRESS, int MECOM_INST)
 {
   MeParFloatFields fFields;
   MeCom_TEC_Mon_ObjectTemperature(MECOM_ADDRESS, MECOM_INST, &fFields, MeGet);
