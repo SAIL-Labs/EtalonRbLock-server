@@ -8,33 +8,31 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <ctype.h>
 //#include "redpitaya/rp.h"
 
 /* configuration constants */
 //#define SERVER_IP_ADDR "10.66.101.133"//"10.66.101.133"
 //#define SERVER_IP_ADDR "10.66.100.101"
-#define SERVER_IP_PORT_A 12345
-#define SERVER_IP_PORT_B 12346
-#define SERVER_IP_PORT_ACK 12347
+#define CLIENT_IP_PORT_A 12345
+#define CLIENT_IP_PORT_B 12346
+#define CLIENT_IP_PORT_ACK 12347
 //#define ACQUISITION_LENGTH 150000    /* samples */
 #define PRE_TRIGGER_LENGTH 0        /* samples */
-#define DECIMATION DE_8             /* one of enum decimation */
+#define DECIMATION DE_64            /* one of enum decimation */
 #define TRIGGER_MODE TR_EXT_FALLING /* one of enum trigger */
-#define TRIGGER_THRESHOLD 750       // 2048            /* ADC counts, 2048 ≃ +0.25V */
-#define DELAYFORLOOP 33000          // 66000
+#define TRIGGER_THRESHOLD 350       // 2048   750         /* ADC counts, 2048 ≃ +0.25V */
+#define DELAYFORLOOP 5              // 66000
 
 /* internal constants */
-#define READ_BLOCK_SIZE 16384
-#define SEND_BLOCK_SIZE 16384
+#define READ_BLOCK_SIZE 20000
+#define SEND_BLOCK_SIZE 20000
 #define RAM_A_ADDRESS 0x1e000000UL
 #define RAM_A_SIZE 0x01000000UL
 #define RAM_B_ADDRESS 0x1f000000UL
 #define RAM_B_SIZE 0x01000000UL
 
-/* MeCom API parameters */
-#define MECOM_ADDRESS 0
-#define MECOM_INST 1
-#define USE_BUILT_IN_PID 1
+#define ENABLE_MECOM 1
 
 #define Kp 0.01
 #define Ki 0

@@ -1,30 +1,13 @@
 /*
- * axi_adc.c
- *
- *  Created on: 4 Dec 2015
- *      Author: nils <doctor@smart.ms>
- *
- * The MIT License (MIT)
- *
- * Copyright (c) 2015 Nils Roos
- *
- * Permission is hereby granted, free of charge, to any person obtaining a copy
- * of this software and associated documentation files (the "Software"), to deal
- * in the Software without restriction, including without limitation the rights
- * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
- * copies of the Software, and to permit persons to whom the Software is
- * furnished to do so, subject to the following conditions:
- *
- * The above copyright notice and this permission notice shall be included in
- * all copies or substantial portions of the Software.
- *
- * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
- * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
- * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
- * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
- * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
- * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE
- * SOFTWARE.
+ * Redpitaya ADC Acquisition and PID controller Server Program for SAIL Photonics Comb Rubidium lock
+ * Base on axi_adc.c redpitaya example code by Nils Roos (License below).
+ * 
+ * New features include:
+ * - TCP/IP comms
+ * - Interface with MeCOM API for comunication with PID controller
+ * - Startup flags to change quastion size (-a), enable PID contoller (-m), set cilent IP (-i) 
+ * 
+ * Copyright Chris Betters USYD 2017
  */
 
 #include <sys/time.h>
@@ -35,7 +18,7 @@
 
 #include "temp_moniter.h"
 #include "configuration.h"
-//#include "MeComAPI/MeCom.h"
+#include "MeComAPI/MeCom.h"
 
 /* data types */
 enum equalizer
@@ -118,9 +101,8 @@ static void scope_setup_trigger_parameters(int thresh_a, int thresh_b,
                                            int deadtime);
 static void scope_setup_axi_recording(void);
 static void scope_activate_trigger(enum trigger trigger);
-static void read_worker(struct queue *a, struct queue *b);
-static void *send_worker(void *data);
-static void *tempmon_worker(void *data);
+static void ADC_read_worker(struct queue *a, struct queue *b);
+static void *TCP_ADC_data_send_worker(void *data);
 unsigned long long getMillisecondsSinceEpoch(void);
 int flipFibreSwitchs(bool enableSpec);
 
@@ -154,8 +136,9 @@ static struct queue queue_tecpid = {
 
 int AckSock_fd;
 
-char SERVER_IP_ADDR[] = "10.66.101.131";
-int ACQUISITION_LENGTH = 150000;
+char CLIENT_IP_ADDR[] = "10.66.101.131";
+int ACQUISITION_LENGTH = 20000;
+int USE_BUILT_IN_PID;
 
 /* functions */
 /*
@@ -170,14 +153,17 @@ int main(int argc, char **argv)
   struct sockaddr_in srv_addr;
   int c;
 
-  while ((c = getopt(argc, argv, "ai:")) != -1)
+  while ((c = getopt(argc, argv, "a:m:i:")) != -1)
     switch (c)
     {
     case 'a':
       ACQUISITION_LENGTH = atoi(optarg);
       break;
     case 'i':
-      strcpy(SERVER_IP_ADDR, optarg);
+      strcpy(CLIENT_IP_ADDR, optarg);
+      break;
+    case 'm':
+      USE_BUILT_IN_PID = atoi(optarg);
       break;
     case '?':
       if (optopt == 'c')
@@ -192,17 +178,21 @@ int main(int argc, char **argv)
     default:
       abort();
     }
-  fprintf(stderr, "IP of Moniter %s\n", SERVER_IP_ADDR);
+  fprintf(stderr, "IP of Moniter %s\n", CLIENT_IP_ADDR);
   // if (rp_Init() != RP_OK) {
   //   fprintf(stderr, "Red Pitaya API init failed!\n");
   //   return EXIT_FAILURE;
   // }
 
-  // if (initMeCom())
-  // {
-  //   fprintf(stderr, "MeCom Failed.");
-  //   goto main_exit;
-  // }
+  if (ENABLE_MECOM)
+  {
+    if (initMeCom(0, 1, USE_BUILT_IN_PID))
+    {
+      fprintf(stderr, "MeCom Failed.");
+      goto main_exit;
+    }
+  }
+
   /* acquire pointers to mapped bus regions of fpga and dma ram */
   mem_fd = open("/dev/mem", O_RDWR);
   if (mem_fd < 0)
@@ -261,7 +251,7 @@ int main(int argc, char **argv)
   memset(&srv_addr, 0, sizeof(srv_addr));
   srv_addr.sin_family = AF_INET;
   srv_addr.sin_addr.s_addr = htonl(INADDR_ANY);
-  srv_addr.sin_port = htons(SERVER_IP_PORT_A);
+  srv_addr.sin_port = htons(CLIENT_IP_PORT_A);
 
   if (bind(queue_a.sock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) <
       0)
@@ -271,7 +261,7 @@ int main(int argc, char **argv)
     goto main_exit;
   }
 
-  srv_addr.sin_port = htons(SERVER_IP_PORT_B);
+  srv_addr.sin_port = htons(CLIENT_IP_PORT_B);
 
   if (bind(queue_b.sock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) <
       0)
@@ -281,31 +271,11 @@ int main(int argc, char **argv)
     goto main_exit;
   }
 
-  // struct timeval timeout;
-  // timeout.tv_sec = 1;
-  // timeout.tv_usec = 0;
-
-  // if (setsockopt(queue_a.sock_fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
-  //                sizeof(timeout)) < 0)
-  //   fprintf(stderr, "setsockopt failed\n");
-
-  // if (setsockopt(queue_a.sock_fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
-  //                sizeof(timeout)) < 0)
-  //   fprintf(stderr, "setsockopt failed\n");
-
-  // if (setsockopt(queue_b.sock_fd, SOL_SOCKET, SO_RCVTIMEO, (char *)&timeout,
-  //                sizeof(timeout)) < 0)
-  //   fprintf(stderr, "setsockopt failed\n");
-
-  // if (setsockopt(queue_b.sock_fd, SOL_SOCKET, SO_SNDTIMEO, (char *)&timeout,
-  //                sizeof(timeout)) < 0)
-  //   fprintf(stderr, "setsockopt failed\n");
-
   /* setup ack socket */
   memset(&srv_addr, 0, sizeof(srv_addr));
   srv_addr.sin_family = AF_INET;
   srv_addr.sin_addr.s_addr = INADDR_ANY;
-  srv_addr.sin_port = htons(SERVER_IP_PORT_ACK);
+  srv_addr.sin_port = htons(CLIENT_IP_PORT_ACK);
   memset(srv_addr.sin_zero, '\0', sizeof srv_addr.sin_zero); // optional
 
   if (bind(AckSock_fd, (struct sockaddr *)&srv_addr, sizeof(srv_addr)) < 0)
@@ -317,13 +287,13 @@ int main(int argc, char **argv)
 
   /* initialize scope */
   scope_reset();
-  scope_setup_input_parameters(DECIMATION, EQ_HV, EQ_LV, 1, 1);
+  scope_setup_input_parameters(DECIMATION, EQ_LV, EQ_HV, 1, 1);
   scope_setup_trigger_parameters(TRIGGER_THRESHOLD, TRIGGER_THRESHOLD, 50, 50,
                                  1250);
   scope_setup_axi_recording();
 
   /* start socket senders */
-  rc = pthread_create(&queue_a.sender, NULL, send_worker, &queue_a);
+  rc = pthread_create(&queue_a.sender, NULL, TCP_ADC_data_send_worker, &queue_a);
   if (rc != 0)
   {
     fprintf(stderr, "start sender A failed, %s\n", strerror(rc));
@@ -332,7 +302,7 @@ int main(int argc, char **argv)
   }
   queue_a.started = 1;
 
-  rc = pthread_create(&queue_b.sender, NULL, send_worker, &queue_b);
+  rc = pthread_create(&queue_b.sender, NULL, TCP_ADC_data_send_worker, &queue_b);
   if (rc != 0)
   {
     fprintf(stderr, "start sender B failed, %s\n", strerror(rc));
@@ -341,21 +311,9 @@ int main(int argc, char **argv)
   }
   queue_b.started = 1;
 
-  /*  rc =
-        pthread_create(&queue_tecpid.sender, NULL, tempmon_worker,
-    &queue_tecpid);
-    if (rc != 0) {
-      fprintf(stderr, "start sender B failed, %s\n", strerror(rc));
-      rc = -6;
-      goto main_exit;
-    }
-    queue_tecpid.started = 1;
-    */
-
   /* start reader in main-thread */
-
-  fprintf(stderr, "read_worker starting...\n");
-  read_worker(&queue_a, &queue_b);
+  fprintf(stderr, "ADC_read_worker starting...\n");
+  ADC_read_worker(&queue_a, &queue_b);
 
 main_exit:
   fprintf(stderr, "exiting...\n");
@@ -504,7 +462,7 @@ static void scope_activate_trigger(enum trigger trigger)
  * queue->read_end for each block that was copied. rinse and repeat. access to
  * read_end is protected by queue->mutex.
  */
-static void read_worker(struct queue *a, struct queue *b)
+static void ADC_read_worker(struct queue *a, struct queue *b)
 {
   unsigned int start_pos_a, start_pos_b;
   unsigned int curr_pos_a, curr_pos_b;
@@ -516,12 +474,11 @@ static void read_worker(struct queue *a, struct queue *b)
   char Ackbuf[100];
   char ackstr[3];
 
-  float settemp;
+  float settempcur;
   float currentTemp;
-  struct sockaddr_in srv_addr;
   int psd;
 
-  //MeParFloatFields Fields;
+  MeParFloatFields Fields;
 
   /*wait for ack to start*/
   fprintf(stderr, "Waiting for Ack to Continue! (1st)\n");
@@ -530,10 +487,10 @@ static void read_worker(struct queue *a, struct queue *b)
   recv(psd, Ackbuf, sizeof(Ackbuf), 0);
   close(psd);
 
-  sscanf(Ackbuf, "%s %f", ackstr, &settemp);
-  fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
+  sscanf(Ackbuf, "%s %f", ackstr, &settempcur);
+  fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settempcur);
   if (strcmp("END", ackstr) == 0)
-    goto read_worker_exit;
+    goto ADC_read_worker_exit;
 
   do
   {
@@ -546,16 +503,16 @@ static void read_worker(struct queue *a, struct queue *b)
       /* wait for send to finish */
       /* get buffer positions */
       if (pthread_mutex_lock(&a->mutex) != 0)
-        goto read_worker_exit;
+        goto ADC_read_worker_exit;
       read_pos_a = a->read_end;
       if (pthread_mutex_unlock(&a->mutex) != 0)
-        goto read_worker_exit;
+        goto ADC_read_worker_exit;
 
       if (pthread_mutex_lock(&b->mutex) != 0)
-        goto read_worker_exit;
+        goto ADC_read_worker_exit;
       read_pos_b = b->read_end;
       if (pthread_mutex_unlock(&b->mutex) != 0)
-        goto read_worker_exit;
+        goto ADC_read_worker_exit;
       usleep(5);
     } while (read_pos_a != 0 || read_pos_b != 0);
 
@@ -589,16 +546,16 @@ static void read_worker(struct queue *a, struct queue *b)
 
       /* get buffer positions */
       if (pthread_mutex_lock(&a->mutex) != 0)
-        goto read_worker_exit;
+        goto ADC_read_worker_exit;
       read_pos_a = a->read_end;
       if (pthread_mutex_unlock(&a->mutex) != 0)
-        goto read_worker_exit;
+        goto ADC_read_worker_exit;
 
       if (pthread_mutex_lock(&b->mutex) != 0)
-        goto read_worker_exit;
+        goto ADC_read_worker_exit;
       read_pos_b = b->read_end;
       if (pthread_mutex_unlock(&b->mutex) != 0)
-        goto read_worker_exit;
+        goto ADC_read_worker_exit;
 
       /* before starting, test if senders are ready */
       if (a_first && read_pos_a == 0)
@@ -644,13 +601,13 @@ static void read_worker(struct queue *a, struct queue *b)
           a_ready = 0; /* stop if all samples were copied */
 
         if (pthread_mutex_lock(&a->mutex) != 0)
-          goto read_worker_exit;
+          goto ADC_read_worker_exit;
         if (a->read_end == read_pos_a)
           a->read_end += length_a;
         else
           a_ready = 0; /* stop if sender resetted read_end */
         if (pthread_mutex_unlock(&a->mutex) != 0)
-          goto read_worker_exit;
+          goto ADC_read_worker_exit;
 
         did_something = 1;
       }
@@ -665,19 +622,22 @@ static void read_worker(struct queue *a, struct queue *b)
           b_ready = 0; /* stop if all samples were copied */
 
         if (pthread_mutex_lock(&b->mutex) != 0)
-          goto read_worker_exit;
+          goto ADC_read_worker_exit;
         if (b->read_end == read_pos_b)
           b->read_end += length_b;
         else
           b_ready = 0; /* stop if sender resetted read_end */
         if (pthread_mutex_unlock(&b->mutex) != 0)
-          goto read_worker_exit;
+          goto ADC_read_worker_exit;
 
         did_something = 1;
       }
     } while (a_first || a_ready || b_first || b_ready);
 
-    //currentTemp = getTECTemp();
+    if (ENABLE_MECOM)
+      currentTemp = getTECTemp(0, 1);
+    else
+      currentTemp = 0;
 
     listen(AckSock_fd, 10);
     psd = accept(AckSock_fd, 0, 0);
@@ -694,45 +654,47 @@ static void read_worker(struct queue *a, struct queue *b)
     fprintf(stderr, "Waiting for Ack to Continue!\n");
     recv(psd, Ackbuf, sizeof(Ackbuf), 0);
     close(psd);
-    sscanf(Ackbuf, "%s %f", ackstr, &settemp);
+    sscanf(Ackbuf, "%s %f", ackstr, &settempcur);
 
-    fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
+    fprintf(stderr, "Received: %s and Temp/Vol set %f\n", ackstr, settempcur);
     // if (flipFibreSwitchs(false))
     //  fprintf(stderr, "2 both switchs are high\n");
 
     if (strcmp("END", ackstr) == 0)
-      goto read_worker_exit;
+      goto ADC_read_worker_exit;
 
-    // if (USE_BUILT_IN_PID)
-    // {
-    //   if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits))
-    //   {
-    //     Fields.Value = settemp;
-    //     if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeSet))
-    //       fprintf(stderr, "TEC Object Temperature: New Value: %f\n",
-    //               Fields.Value);
-    //   }
-    // }
-    // else
-    // {
-    // }
+    if (USE_BUILT_IN_PID && ENABLE_MECOM)
+    {
+      if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits))
+      {
+        Fields.Value = settempcur;
+        if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeSet))
+          fprintf(stderr, "TEC Object Temperature: New Value: %f\n",
+                  Fields.Value);
+      }
+    }
+    else
+    {
+      setTECVandC(0, 1, 2, settempcur);
+      fprintf(stderr, "TEC Current: New Value: %f\n", settempcur);
+    }
     usleep(DELAYFORLOOP);
   } while (1);
 
-read_worker_exit:
-  fprintf(stderr, "read_worker_exit\n");
+ADC_read_worker_exit:
+  fprintf(stderr, "ADC_read_worker_exit\n");
   return;
 }
 
 /*
  * sends samples from a struct queue. synchronisation with the queue is done via
- * queue->read_end. send_worker will send data from 0 to read_end and will reset
+ * queue->read_end. TCP_ADC_data_send_worker will send data from 0 to read_end and will reset
  * read_end to 0 once ACQUISITION_LENGTH samples have been transmitted. then it
  * will wait until read_end advances from 0 and start all over. access to
  * read_end
  * is protected by queue->mutex.
  */
-static void *send_worker(void *data)
+static void *TCP_ADC_data_send_worker(void *data)
 {
   struct queue *q = (struct queue *)data;
   int psd = 0;
@@ -743,7 +705,7 @@ static void *send_worker(void *data)
   do
   {
     if (pthread_mutex_lock(&q->mutex) != 0)
-      goto send_worker_exit;
+      goto TCP_ADC_data_send_worker_exit;
     if (q->read_end >= ACQUISITION_LENGTH * 2 &&
         send_pos >= ACQUISITION_LENGTH * 2)
     {
@@ -754,7 +716,7 @@ static void *send_worker(void *data)
     }
     length = q->read_end - send_pos;
     if (pthread_mutex_unlock(&q->mutex) != 0)
-      goto send_worker_exit;
+      goto TCP_ADC_data_send_worker_exit;
 
     if (length > 0)
     {
@@ -781,7 +743,7 @@ static void *send_worker(void *data)
 
       // sent = send(q->sock_fd, "\n", 1, 0);
       if (sent < 0)
-        goto send_worker_exit;
+        goto TCP_ADC_data_send_worker_exit;
     }
     else
     {
@@ -789,35 +751,9 @@ static void *send_worker(void *data)
     }
   } while (1);
 
-send_worker_exit:
+TCP_ADC_data_send_worker_exit:
   return NULL;
 }
-
-// static void *tempmon_worker(void *data)
-// {
-//   // struct queue *q = (struct queue *)data;
-//   FILE *fp;
-//   fp = fopen("moniter.csv", "a");
-//   float temp, V, I;
-//   unsigned long long curTime;
-//   // float newsetpoint;
-//   do
-//   {
-//     temp = getTECTemp();
-//     getTECVandC(&V, &I);
-//     curTime = getMillisecondsSinceEpoch();
-
-//     // newsetpoint=PID_Controller (8.0, temp);
-
-//     // fprintf(stderr, "Time %lld Temp %f, V %f, I %f\n, New Set: %f\n",curTime,
-//     // temp, V, I,newsetpoint);
-//     fprintf(fp, "Time %lld Temp %f, V %f, I %f\n", curTime, temp, V, I);
-//     usleep(2000000);
-//   } while (1);
-//   // send_worker_exit:
-//   // return NULL;
-//   return NULL;
-// }
 
 unsigned long long getMillisecondsSinceEpoch(void)
 {
@@ -829,40 +765,6 @@ unsigned long long getMillisecondsSinceEpoch(void)
       (unsigned long long)(tv.tv_usec) / 1000;
   return millisecondsSinceEpoch;
 }
-
-// int flipFibreSwitchs(bool enableSpec) {
-//   rp_pinState_t switch1state;
-//   rp_pinState_t switch2state;
-//   bool pathIsToRb;
-
-//   rp_DpinSetDirection(SW1STATUSPIN, RP_IN);
-//   rp_DpinSetDirection(SW2STATUSPIN, RP_IN);
-//   rp_DpinSetDirection(SW1TRIGPIN, RP_OUT);
-//   rp_DpinSetDirection(SW1TRIGPIN, RP_OUT);
-
-//   rp_DpinGetState(SW1STATUSPIN, &switch1state);
-//   rp_DpinGetState(SW2STATUSPIN, &switch2state);
-
-//   if (switch1state == RP_HIGH && switch2state == RP_HIGH)
-//     pathIsToRb = true;
-//   else
-//     pathIsToRb = false;
-
-//   if (enableSpec && pathIsToRb) {
-//     rp_DpinSetState(SW1TRIGPIN, RP_HIGH);
-//     rp_DpinSetState(SW2TRIGPIN, RP_HIGH);
-//     usleep(10000);
-//     rp_DpinSetState(SW1TRIGPIN, RP_LOW);
-//     rp_DpinSetState(SW2TRIGPIN, RP_LOW);
-//   }
-
-//   rp_DpinGetState(SW1STATUSPIN, &switch1state);
-//   rp_DpinGetState(SW2STATUSPIN, &switch2state);
-//   if (switch1state == RP_HIGH && switch2state == RP_HIGH)
-//     return 1;
-//   else
-//     return 0;
-// }
 
 float actual_error, error_previous, P, I, D;
 
