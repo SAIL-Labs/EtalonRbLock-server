@@ -120,7 +120,6 @@ static void scope_setup_axi_recording(void);
 static void scope_activate_trigger(enum trigger trigger);
 static void read_worker(struct queue *a, struct queue *b);
 static void *send_worker(void *data);
-static void *tempmon_worker(void *data);
 unsigned long long getMillisecondsSinceEpoch(void);
 int flipFibreSwitchs(bool enableSpec);
 
@@ -156,6 +155,7 @@ int AckSock_fd;
 
 char SERVER_IP_ADDR[] = "10.66.101.131";
 int ACQUISITION_LENGTH = 20000;
+int USE_BUILT_IN_PID;
 
 /* functions */
 /*
@@ -170,7 +170,7 @@ int main(int argc, char **argv)
   struct sockaddr_in srv_addr;
   int c;
 
-  while ((c = getopt(argc, argv, "ai:")) != -1)
+  while ((c = getopt(argc, argv, "a:m:i:")) != -1)
     switch (c)
     {
     case 'a':
@@ -178,6 +178,9 @@ int main(int argc, char **argv)
       break;
     case 'i':
       strcpy(SERVER_IP_ADDR, optarg);
+      break;
+    case 'm':
+      USE_BUILT_IN_PID = atoi(optarg);
       break;
     case '?':
       if (optopt == 'c')
@@ -200,12 +203,13 @@ int main(int argc, char **argv)
 
   if (ENABLE_MECOM)
   {
-    if (initMeCom())
+    if (initMeCom(0, 1, USE_BUILT_IN_PID))
     {
       fprintf(stderr, "MeCom Failed.");
       goto main_exit;
     }
   }
+
   /* acquire pointers to mapped bus regions of fpga and dma ram */
   mem_fd = open("/dev/mem", O_RDWR);
   if (mem_fd < 0)
@@ -519,9 +523,8 @@ static void read_worker(struct queue *a, struct queue *b)
   char Ackbuf[100];
   char ackstr[3];
 
-  float settemp;
+  float settempcur;
   float currentTemp;
-  struct sockaddr_in srv_addr;
   int psd;
 
   MeParFloatFields Fields;
@@ -533,8 +536,8 @@ static void read_worker(struct queue *a, struct queue *b)
   recv(psd, Ackbuf, sizeof(Ackbuf), 0);
   close(psd);
 
-  sscanf(Ackbuf, "%s %f", ackstr, &settemp);
-  fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
+  sscanf(Ackbuf, "%s %f", ackstr, &settempcur);
+  fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settempcur);
   if (strcmp("END", ackstr) == 0)
     goto read_worker_exit;
 
@@ -681,7 +684,7 @@ static void read_worker(struct queue *a, struct queue *b)
     } while (a_first || a_ready || b_first || b_ready);
 
     if (ENABLE_MECOM)
-      currentTemp = getTECTemp();
+      currentTemp = getTECTemp(0, 1);
     else
       currentTemp = 0;
 
@@ -700,9 +703,9 @@ static void read_worker(struct queue *a, struct queue *b)
     fprintf(stderr, "Waiting for Ack to Continue!\n");
     recv(psd, Ackbuf, sizeof(Ackbuf), 0);
     close(psd);
-    sscanf(Ackbuf, "%s %f", ackstr, &settemp);
+    sscanf(Ackbuf, "%s %f", ackstr, &settempcur);
 
-    fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settemp);
+    fprintf(stderr, "Received: %s and Temp/Vol set %f\n", ackstr, settempcur);
     // if (flipFibreSwitchs(false))
     //  fprintf(stderr, "2 both switchs are high\n");
 
@@ -713,7 +716,7 @@ static void read_worker(struct queue *a, struct queue *b)
     {
       if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits))
       {
-        Fields.Value = settemp;
+        Fields.Value = settempcur;
         if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeSet))
           fprintf(stderr, "TEC Object Temperature: New Value: %f\n",
                   Fields.Value);
@@ -721,6 +724,8 @@ static void read_worker(struct queue *a, struct queue *b)
     }
     else
     {
+      setTECVandC(0, 1, 2, settempcur);
+      fprintf(stderr, "TEC Current: New Value: %f\n", settempcur);
     }
     usleep(DELAYFORLOOP);
   } while (1);

@@ -8,6 +8,7 @@
 #include <string.h>
 #include <unistd.h>
 #include <stdbool.h>
+#include <ctype.h>
 //#include "redpitaya/rp.h"
 
 /* configuration constants */
@@ -32,10 +33,6 @@
 #define RAM_B_SIZE 0x01000000UL
 
 #define ENABLE_MECOM 1
-/* MeCom API parameters */
-#define MECOM_ADDRESS 0
-#define MECOM_INST 1
-#define USE_BUILT_IN_PID 1
 
 #define Kp 0.01
 #define Ki 0
