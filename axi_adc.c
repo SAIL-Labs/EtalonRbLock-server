@@ -1,6 +1,6 @@
 /*
  * Redpitaya ADC Acquisition and PID controller Server Program for SAIL Photonics Comb Rubidium lock
- * Base on axi_adc.c redpitaya example code by Nils Roos (License below).
+ * Base on axi_adc.c redpitaya example code by Nils Roos (License attached).
  * 
  * New features include:
  * - TCP/IP comms
@@ -675,7 +675,7 @@ static void ADC_read_worker(struct queue *a, struct queue *b)
     }
     else
     {
-      setTECVandC(0, 1, 2, settempcur);
+      setTECVandC(0, 1, 3, settempcur);
       fprintf(stderr, "TEC Current: New Value: %f\n", settempcur);
     }
     usleep(DELAYFORLOOP);
