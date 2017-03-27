@@ -2,6 +2,8 @@
 CC = $(CROSS_COMPILE)gcc
 RM      = rm -rf
 
+SOURCEDIR=Dropbox/github/postdoc_code/PhotonicComb/EtalonRbLock-server
+
 CFLAGS  = -g -std=gnu99 -Wall
 #-Werror
 #CFLAGS += -I../../api/include
@@ -21,12 +23,12 @@ SRCS+=$(MECOMSRC)
 OBJ = $(SRCS:%.c=%.o)
 
 # All Target
-all: UDPStreamer
+all: EtalonRbLock-server
 
-UDPStreamer: $(OBJ)
+EtalonRbLock-server: $(OBJ)
 	@echo 'Building target: $@'
 	@echo 'Invoking: GCC C Linker'
-	$(CC) -o "UDPStreamer" $(OBJ) $(CFLAGS)
+	$(CC) -o "EtalonRbLock-server" $(OBJ) $(CFLAGS)
 	@echo 'Finished building target: $@'
 	@echo ' '
 
@@ -38,10 +40,10 @@ UDPStreamer: $(OBJ)
 	@echo ' '
 
 clean:
-	-$(RM) $(OBJ) UDPStreamer
+	-$(RM) $(OBJ) EtalonRbLock-server
 	
 update:
 	clear
-	-$(RM) UDPStreamer axi_adc.o
-	rsync -arP --exclude '.vscode*' --exclude '.git*' chrisbetters@chris-delphi.sail-laboratories.com:Dropbox/github/postdoc_code/red/RpRbDAQ ~/
-	$(MAKE) UDPStreamer
+	-$(RM) EtalonRbLock-server axi_adc.o
+	rsync -arP --exclude '.vscode*' --exclude '.git*' chrisbetters@chris-delphi.sail-laboratories.com:$(SOURCEDIR) ~/
+	$(MAKE) EtalonRbLock-server
