@@ -19,6 +19,7 @@
 #include "temp_moniter.h"
 #include "configuration.h"
 #include "MeComAPI/MeCom.h"
+#include "bme280.h"
 
 /* data types */
 enum equalizer
@@ -140,6 +141,9 @@ char CLIENT_IP_ADDR[] = "10.66.101.131";
 int ACQUISITION_LENGTH = 20000;
 int USE_BUILT_IN_PID;
 
+// int bmefd;
+// bme280_calib_data bmecal;
+
 /* functions */
 /*
  * main without paramater evaluation - all configuration is done through
@@ -192,6 +196,15 @@ int main(int argc, char **argv)
       goto main_exit;
     }
   }
+
+  // if (ENABLE_BME280)
+  // {
+  //   if (setupBME280())
+  //   {
+  //     fprintf(stderr, "BME280 Failed.");
+  //     goto main_exit;
+  //   }
+  // }
 
   /* acquire pointers to mapped bus regions of fpga and dma ram */
   mem_fd = open("/dev/mem", O_RDWR);
@@ -477,6 +490,7 @@ static void ADC_read_worker(struct queue *a, struct queue *b)
   float settempcur;
   float currentTemp;
   int psd;
+  float t, p, h;
 
   MeParFloatFields Fields;
 
@@ -525,6 +539,16 @@ static void ADC_read_worker(struct queue *a, struct queue *b)
 
     unsigned long long millisecondsSinceEpoch = getMillisecondsSinceEpoch();
     fprintf(stderr, "Triggered at %lld.\n", millisecondsSinceEpoch);
+
+    if (ENABLE_MECOM)
+      currentTemp = getTECTemp(0, 1);
+    else
+      currentTemp = 0;
+    if (ENABLE_BME280)
+    {
+      connectAndGetBMEData(&t, &p, &h);
+      //fprintf(stderr, "Sent - Time: %f, Tec Temp: %f, Ext Temp: %f, Pressure: %f, Humidity: %f\n", millisecondsSinceEpoch / 1000.0, currentTemp, t, p, h);
+    }
 
     start_pos_a =
         *(uint32_t *)(scope + 0x00060); /* channel a trigger pointer */
@@ -634,17 +658,17 @@ static void ADC_read_worker(struct queue *a, struct queue *b)
       }
     } while (a_first || a_ready || b_first || b_ready);
 
-    if (ENABLE_MECOM)
-      currentTemp = getTECTemp(0, 1);
-    else
-      currentTemp = 0;
 
     listen(AckSock_fd, 10);
     psd = accept(AckSock_fd, 0, 0);
     fprintf(stderr, "Waiting to send temp and timestamp!\n");
     send(psd, &millisecondsSinceEpoch, sizeof(unsigned long long), 0);
     send(psd, &currentTemp, sizeof(float), 0);
+    send(psd, &t, sizeof(float), 0);
+    send(psd, &p, sizeof(float), 0);
+    send(psd, &h, sizeof(float), 0);
     close(psd);
+
     //rp_DpinSetState(RP_LED4, RP_LOW);
 
     /*wait for ack to cont*/
@@ -657,8 +681,6 @@ static void ADC_read_worker(struct queue *a, struct queue *b)
     sscanf(Ackbuf, "%s %f", ackstr, &settempcur);
 
     fprintf(stderr, "Received: %s and Temp/Vol set %f\n", ackstr, settempcur);
-    // if (flipFibreSwitchs(false))
-    //  fprintf(stderr, "2 both switchs are high\n");
 
     if (strcmp("END", ackstr) == 0)
       goto ADC_read_worker_exit;

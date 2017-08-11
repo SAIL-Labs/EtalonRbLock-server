@@ -33,6 +33,7 @@
 #define RAM_B_SIZE 0x01000000UL
 
 #define ENABLE_MECOM 1
+#define ENABLE_BME280 1
 
 #define Kp 0.01
 #define Ki 0

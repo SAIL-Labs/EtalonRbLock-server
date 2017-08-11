@@ -10,6 +10,7 @@ CFLAGS  = -g -std=gnu99 -Wall
 #CFLAGS += -L ../../api/lib -lm -lpthread -lrp
 CFLAGS += -I/opt/redpitaya/include 
 CFLAGS += -L/opt/redpitaya/lib -lm -lpthread -lrp
+CFLAGS += -lwiringPi
 
 LDFLAGS = -L/opt/redpitaya/lib -lm -lpthread -lrp
 
@@ -18,7 +19,7 @@ MECOMSRC = MeComAPI/MePort_Linux.c \
       MeComAPI/private/MeFrame.c MeComAPI/private/MeInt.c \
       MeComAPI/private/MeVarConv.c MeComAPI/ComPort/ComPort_Linux.c
 
-SRCS=temp_moniter.c axi_adc.c
+SRCS=temp_moniter.c axi_adc.c bme280.c
 SRCS+=$(MECOMSRC)
 OBJ = $(SRCS:%.c=%.o)
 
