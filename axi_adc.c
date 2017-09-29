@@ -380,11 +380,11 @@ static void scope_set_filters(enum equalizer eq, int shaping,
   switch (eq)
   {
   case EQ_HV:
-    *(base + 0) = 0x4c5f;  /* filter coeff aa */
+    *(base + 0) = 0x4c5f; /* filter coeff aa */
     *(base + 1) = 0x2f38b; /* filter coeff bb */
     break;
   case EQ_LV:
-    *(base + 0) = 0x7d93;  /* filter coeff aa */
+    *(base + 0) = 0x7d93; /* filter coeff aa */
     *(base + 1) = 0x437c7; /* filter coeff bb */
     break;
   case EQ_OFF:
@@ -397,12 +397,12 @@ static void scope_set_filters(enum equalizer eq, int shaping,
   if (shaping)
   {
     *(base + 2) = 0xd9999a; /* filter coeff kk */
-    *(base + 3) = 0x2666;   /* filter coeff pp */
+    *(base + 3) = 0x2666; /* filter coeff pp */
   }
   else
   {
     *(base + 2) = 0xffffff; /* filter coeff kk */
-    *(base + 3) = 0x0;      /* filter coeff pp */
+    *(base + 3) = 0x0; /* filter coeff pp */
   }
 }
 
@@ -436,9 +436,9 @@ static void scope_setup_trigger_parameters(int thresh_a, int thresh_b,
    * occured, and the pre-trigger samples are already waiting for transmission),
    * so set
    * some small value > 0 here */
-  *(uint32_t *)(scope + 0x00010) = 10;       /* legacy post trigger samples */
-  *(uint32_t *)(scope + 0x00020) = hyst_a;   /* channel a trigger hysteresis */
-  *(uint32_t *)(scope + 0x00024) = hyst_b;   /* channel b trigger hysteresis */
+  *(uint32_t *)(scope + 0x00010) = 10; /* legacy post trigger samples */
+  *(uint32_t *)(scope + 0x00020) = hyst_a; /* channel a trigger hysteresis */
+  *(uint32_t *)(scope + 0x00024) = hyst_b; /* channel b trigger hysteresis */
   *(uint32_t *)(scope + 0x00090) = deadtime; /* trigger deadtime */
 }
 
@@ -448,7 +448,7 @@ static void scope_setup_axi_recording(void)
   *(uint32_t *)(scope + 0x00054) =
       RAM_A_ADDRESS + RAM_A_SIZE; /* buffer a stop */
   *(uint32_t *)(scope + 0x00058) = ACQUISITION_LENGTH - PRE_TRIGGER_LENGTH +
-                                   64;            /* channel a post trigger samples */
+                                   64; /* channel a post trigger samples */
   *(uint32_t *)(scope + 0x00070) = RAM_B_ADDRESS; /* buffer b start */
   *(uint32_t *)(scope + 0x00074) =
       RAM_B_ADDRESS + RAM_B_SIZE; /* buffer b stop */
@@ -464,8 +464,8 @@ static void scope_activate_trigger(enum trigger trigger)
   /* TODO maybe use the 'keep armed' flag without reset, to have better
    * pre-trigger data when a trigger immediately follows the previous recording
    */
-  *(uint32_t *)(scope + 0x00000) = 3;       /* reset and arm scope */
-  *(uint32_t *)(scope + 0x00000) = 0;       /* armed for trigger */
+  *(uint32_t *)(scope + 0x00000) = 3; /* reset and arm scope */
+  *(uint32_t *)(scope + 0x00000) = 0; /* armed for trigger */
   *(uint32_t *)(scope + 0x00004) = trigger; /* trigger source */
 }
 
@@ -488,6 +488,7 @@ static void ADC_read_worker(struct queue *a, struct queue *b)
   char ackstr[3];
 
   float settempcur;
+  float prev_settempcur;
   float currentTemp;
   int psd;
   float t, p, h;
@@ -503,6 +504,9 @@ static void ADC_read_worker(struct queue *a, struct queue *b)
 
   sscanf(Ackbuf, "%s %f", ackstr, &settempcur);
   fprintf(stderr, "Received: %s and Temp set %f\n", ackstr, settempcur);
+
+  prev_settempcur = settempcur + 0.1; // force different for first test
+
   if (strcmp("END", ackstr) == 0)
     goto ADC_read_worker_exit;
 
@@ -658,7 +662,6 @@ static void ADC_read_worker(struct queue *a, struct queue *b)
       }
     } while (a_first || a_ready || b_first || b_ready);
 
-
     listen(AckSock_fd, 10);
     psd = accept(AckSock_fd, 0, 0);
     fprintf(stderr, "Waiting to send temp and timestamp!\n");
@@ -685,21 +688,25 @@ static void ADC_read_worker(struct queue *a, struct queue *b)
     if (strcmp("END", ackstr) == 0)
       goto ADC_read_worker_exit;
 
-    if (USE_BUILT_IN_PID && ENABLE_MECOM)
+    if (prev_settempcur != settempcur) // only set if value changes.
     {
-      if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits))
+      if (USE_BUILT_IN_PID && ENABLE_MECOM)
       {
-        Fields.Value = settempcur;
-        if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeSet))
-          fprintf(stderr, "TEC Object Temperature: New Value: %f\n",
-                  Fields.Value);
+        if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeGetLimits))
+        {
+          Fields.Value = settempcur;
+          if (MeCom_TEC_Tem_TargetObjectTemp(0, 1, &Fields, MeSet))
+            fprintf(stderr, "TEC Object Temperature: New Value: %f\n",
+                    Fields.Value);
+        }
+      }
+      else
+      {
+        setTECVandC(0, 1, 3, settempcur);
+        fprintf(stderr, "TEC Current: New Value: %f\n", settempcur);
       }
     }
-    else
-    {
-      setTECVandC(0, 1, 3, settempcur);
-      fprintf(stderr, "TEC Current: New Value: %f\n", settempcur);
-    }
+
     usleep(DELAYFORLOOP);
   } while (1);
 
@@ -795,10 +802,10 @@ float PID_Controller(float set_point, float measured_value)
   error_previous = actual_error; // error_previous holds the previous error
   actual_error = set_point - measured_value;
   // PID
-  P = actual_error;                  // Current error
-  I += error_previous;               // Sum of previous errors
+  P = actual_error; // Current error
+  I += error_previous; // Sum of previous errors
   D = actual_error - error_previous; // Difference with previous error
 
   return Kp * P + Ki * I + Kd * D; // adjust Kp, Ki, Kd empirically or by using
-                                   // online method such as ZN
+      // online method such as ZN
 }
